@@ -21,15 +21,16 @@ const TOOLCHAINS = new Map([
   ["0.2.2-rc.1", ["4.1.0", "3.19.0", "1.1.0", "1.1.0"]],
   ["0.2.2-rc.2", ["4.1.0", "3.19.0", "1.1.0", "1.1.0"]],
   ["0.2.2-rc.3", ["4.1.0", "3.19.0", "1.1.0", "1.1.0"]],
+  ["0.2.2-rc.4", ["4.1.0", "3.19.0", "1.1.0", "1.1.0"]],
 ]);
 export const SUPPORTED_HOSTS = Object.freeze([...TOOLCHAINS.keys()]);
 const workingDirectoryHosts = new Set([
   "0.2.1-alpha.2", "0.2.1-alpha.3", "0.2.1-alpha.4", "0.2.1-alpha.5",
   "0.2.1-rc.1", "0.2.1-rc.2", "0.2.1-rc.3", "0.2.1-rc.4", "0.2.1-rc.5",
-  "0.2.2-alpha.2", "0.2.2-alpha.3", "0.2.2-rc.1", "0.2.2-rc.2", "0.2.2-rc.3",
+  "0.2.2-alpha.2", "0.2.2-alpha.3", "0.2.2-rc.1", "0.2.2-rc.2", "0.2.2-rc.3", "0.2.2-rc.4",
 ]);
 const executorHosts = new Set([
-  "0.2.2-alpha.2", "0.2.2-alpha.3", "0.2.2-rc.1", "0.2.2-rc.2", "0.2.2-rc.3",
+  "0.2.2-alpha.2", "0.2.2-alpha.3", "0.2.2-rc.1", "0.2.2-rc.2", "0.2.2-rc.3", "0.2.2-rc.4",
 ]);
 
 export function createCompatManifest(original, version) {
@@ -66,6 +67,9 @@ export function createCompatManifest(original, version) {
     for (const executor of ["native", "ptc"]) {
       manifest.devDependencies[`@deepseek-ai/dsh-tool-executor-${executor}`] = version;
     }
+  }
+  if (version === "0.2.2-rc.4") {
+    manifest.devDependencies["@deepseek-ai/dsh-llm-deepseek"] = version;
   }
   return manifest;
 }
