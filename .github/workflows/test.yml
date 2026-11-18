@@ -35,6 +35,8 @@ jobs:
           node-version: 24
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - name: Verify E2E lockfile
+        run: pnpm --dir e2e install --frozen-lockfile --lockfile-only
       - name: Verify client bundle is up to date
         run: |
           pnpm run build:client

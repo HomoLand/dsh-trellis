@@ -1,10 +1,11 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { appendFile, mkdtemp, mkdir, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { registerCommands } from "../lib/commands.js";
 import { runTrellisDoctor } from "../lib/doctor.js";
+import { nodeFs } from "../lib/node-fs.js";
 import { resolveConfig } from "../lib/config.js";
 import { parseWorkflowStateBlocks } from "../lib/workflow.js";
 
@@ -236,6 +237,53 @@ test("trellis-doctor warns on missing .dsh templates or 0.6.17 active_task.py an
   );
 });
 
+for (const state of ["missing", "unreadable"]) {
+  test(`trellis-doctor reports when active_task.py is ${state} before repairing templates`, async (t) => {
+    const root = await mkdtemp(join(tmpdir(), "dsh-trellis-doctor-required-"));
+    t.after(() => rm(root, { recursive: true, force: true }));
+    await seedBeta4Project(root);
+    const activeTask = join(root, ".trellis", "scripts", "common", "active_task.py");
+    await rename(activeTask, activeTask + ".backup");
+    if (state === "unreadable") await mkdir(activeTask);
+
+    for (const fix of [false, true]) {
+      const result = await runTrellisDoctor(root, { fix });
+      assert.equal(result.kind, "error");
+      assert.match(result.text, /active_task\.py.*missing or unreadable/);
+      assert.equal(await readFile(join(root, ".dsh", "DSH.md"), "utf8"), BETA4_DSH_MD);
+    }
+  });
+}
+
+test("trellis-doctor preserves an edit saved after reading a template", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "dsh-trellis-doctor-conflict-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await seedBeta4Project(root);
+  const guide = join(root, ".dsh", "DSH.md");
+  const edit = "\n## Local editor save\n";
+  const result = await runTrellisDoctor(root, { fix: true, fs: {
+    ...nodeFs,
+    async readFile(path) {
+      const content = await nodeFs.readFile(path);
+      if (path === guide) await appendFile(path, edit, "utf8");
+      return content;
+    },
+  } });
+
+  assert.equal(await readFile(guide, "utf8"), BETA4_DSH_MD + edit);
+  assert.equal(result.kind, "error");
+  assert.match(result.text, /DSH\.md changed during repair/);
+  assert.deepEqual((await readdir(dirname(guide))).sort(), ["DSH.md", "skills"]);
+  assert.equal(
+    await readFile(join(root, ".dsh", "skills", "trellis-agent-research", "SKILL.md"), "utf8"),
+    beta4ResearchSkill("python"),
+  );
+
+  const retry = await runTrellisDoctor(root, { fix: true });
+  assert.equal(retry.summary.fixed, 7);
+  assert.ok((await readFile(guide, "utf8")).endsWith(edit));
+});
+
 test("trellis-doctor command validates arguments, attachments, working directory, aborts, and write failures", async (t) => {
   const root = await mkdtemp(join(tmpdir(), "dsh-trellis-doctor-cmd-"));
   t.after(() => rm(root, { recursive: true, force: true }));
@@ -308,22 +356,8 @@ test("trellis-doctor command validates arguments, attachments, working directory
   t.after(() => rm(writeFailRoot, { recursive: true, force: true }));
   await seedBeta4Project(writeFailRoot);
   const failingFs = {
-    async exists(p) {
-      try {
-        await readFile(p);
-        return true;
-      } catch {
-        return false;
-      }
-    },
-    async readFile(p) {
-      try {
-        return await readFile(p, "utf8");
-      } catch {
-        return null;
-      }
-    },
-    async writeFile() {
+    ...nodeFs,
+    async replaceFileIfUnchanged() {
       throw new Error("EACCES: read-only filesystem");
     },
   };

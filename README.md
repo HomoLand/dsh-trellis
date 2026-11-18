@@ -27,10 +27,10 @@ dsh plugin --profile tui add dsh-trellis
 
 DSH `0.2.0-rc.2` 的 macOS / Windows 桌面端可在菜单栏“Manage dsh command”中安装或管理内置 `dsh` 命令，无需单独安装 Node 或 pnpm。先用 `dsh --version` 确认 PATH 中实际调用的版本；旧的全局 CLI 可能与桌面端不同。桌面端默认使用 `desktop` profile，其他 profile 仍需分别安装。
 
-新版本刚发布时，插件页预览的版本可能与安装器最终选择的版本不同。需要本版插件 `0.1.22` 时，在插件页输入 `dsh-trellis@0.1.22`，或显式安装到实际使用的 profile：
+新版本刚发布时，插件页预览的版本可能与安装器最终选择的版本不同。需要本版插件 `0.1.23` 时，在插件页输入 `dsh-trellis@0.1.23`，或显式安装到实际使用的 profile：
 
 ```powershell
-dsh plugin --profile desktop add dsh-trellis@0.1.22
+dsh plugin --profile desktop add dsh-trellis@0.1.23
 # Web / headless 用户将 desktop 替换为对应 profile 名称。
 ```
 
@@ -79,6 +79,11 @@ npx @mindfoldhq/trellis@beta init --dsh
 运行时需要 profile 提供 `sessionProjections` 服务；该依赖由插件的 `inject` 声明。自定义或精简 profile 若未组装此服务，需先加载 `@deepseek-ai/dsh-session-projection`，否则插件会等待依赖，不会退回直接扫描历史。
 
 DSH `0.2.2-alpha.2` 将工具执行移至独立 executor。自定义 profile 除 `tools` 外还需选择 `@deepseek-ai/dsh-tool-executor-native`，或具备 PTC runtime 的 `@deepseek-ai/dsh-tool-executor-ptc`；标准宿主负责组装。插件只注册 `trellis_wait`，使用宿主选定的执行器，不自行切换执行模式。
+
+### 0.1.23 · 模板体检修复
+
+- `/trellis-doctor --fix` 在原子替换前复查文件内容，检测到并发编辑时停止。必需的 `active_task.py` 缺失或不可读时，体检会报错。
+- Windows 和 Linux CI 校验 E2E 的冻结锁文件。兼容清单集中维护每个版本的工具链和依赖，仍覆盖同样的 21 个宿主。
 
 ### 0.1.22：DSH 0.2.2-rc.4 兼容回归
 
@@ -289,7 +294,7 @@ Host half 是直接由 `main` 加载的 ESM JavaScript；Web half 通过 tsdown 
 启用后，由发布操作者执行，例如：
 
 ```powershell
-gh workflow run publish.yml --repo SajoLuo/dsh-trellis --ref main -f tag=v0.1.22
+gh workflow run publish.yml --repo SajoLuo/dsh-trellis --ref main -f tag=v0.1.23
 ```
 
 GitHub-hosted runner 通过 OIDC 获取临时发布凭据并生成 provenance。这里的授权属于指定发布流程；本机直接运行 `npm publish` 仍按 npm 的交互认证规则执行。首次 OIDC 真发布前，不把配置或本地检查视为认证已经验证成功。
