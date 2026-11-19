@@ -9,8 +9,10 @@ import { SessionQueryEngine } from "@deepseek-ai/dsh-session-query";
 import { agentRuntime } from "./helpers/agent-runtime.js";
 import { registerWaitTool } from "../lib/wait-tool.js";
 
-test("RC.4 DeepSeek Messages refusal records usage and fails the Trellis child gate", {
-  skip: llmPackage.version !== "0.2.2-rc.4" && "requires the RC.4 DeepSeek Messages adapter",
+const hasDeepSeekRefusal = ["0.2.2-rc.4", "0.2.2-rc.5"].includes(llmPackage.version);
+
+test("DeepSeek Messages refusal records usage and fails the Trellis child gate", {
+  skip: !hasDeepSeekRefusal && "requires a verified DeepSeek Messages refusal adapter",
   timeout: 15_000,
 }, async (t) => {
   const { DeepSeekAdapter, resolveAdapterOptions } = await import("@deepseek-ai/dsh-llm-deepseek");

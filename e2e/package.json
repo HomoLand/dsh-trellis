@@ -6,7 +6,7 @@
   "pnpm": {
     "onlyBuiltDependencies": ["@deepseek-ai/dsh-subprocess-local", "koffi", "node-pty"],
     "overrides": {
-      "@deepseek-ai/dsh-mcp-client@0.2.2-rc.4>@modelcontextprotocol/client": "2.3.0",
+      "@deepseek-ai/dsh-mcp-client@0.2.2-rc.5>@modelcontextprotocol/client": "2.3.0",
       "@deepseek-ai/libreoffice-kit@0.2.3>fflate": "0.8.3",
       "undici@8.11.2": "8.12.4",
       "picomatch": "npm:@ryotsu/picomatch@4.0.7-a"
@@ -14,7 +14,7 @@
   },
   "dependencies": {
     "@deepseek-ai/cordis-plugin-group": "1.1.0",
-    "@deepseek-ai/dsh": "0.2.2-rc.4",
+    "@deepseek-ai/dsh": "0.2.2-rc.5",
     "@mindfoldhq/trellis": "0.7.0-beta.4"
   }
 }

@@ -45,6 +45,10 @@ const HOSTS = new Map([
     pins: ["4.1.0", "3.19.0", "1.1.0", "1.1.0"],
     packages: [...splitExecutors, "llm-deepseek"],
   }],
+  ["0.2.2-rc.5", {
+    pins: ["4.1.0", "3.19.0", "1.1.0", "1.1.0"],
+    packages: [...splitExecutors, "llm-deepseek"],
+  }],
 ]);
 export const SUPPORTED_HOSTS = Object.freeze([...HOSTS.keys()]);
 

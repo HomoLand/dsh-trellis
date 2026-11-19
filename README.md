@@ -62,7 +62,7 @@ dsh plugin --profile headless add file:C:/path/to/dsh-trellis
 ### 快速开始
 
 ```powershell
-# 1. 安装 DSH（@next 指向 0.2.2-rc.4，@latest 当前为 0.2.2-rc.1）
+# 1. 安装 DSH（@next 和 @latest 当前均指向 0.2.2-rc.5）
 npm install --global @deepseek-ai/dsh@next
 
 # 2. 为实际使用的 profile 安装 dsh-trellis
@@ -74,7 +74,9 @@ npx @mindfoldhq/trellis@beta init --dsh
 # 4. 在 DSH 会话中运行 /trellis-doctor --fix，将 @mindfoldhq/trellis@0.7.0-beta.4 模板幂等对齐到 DSH 0.2.2+ 能力契约
 ```
 
-配套要求：项目的 Trellis 平台需包含 `dsh`，推荐使用 `npx @mindfoldhq/trellis@beta init --dsh`（`>=0.7.0-beta.4`；注意 `@mindfoldhq/trellis@latest` `0.6.17` 尚未包含读取 `DSH_TRELLIS_CONTEXT_ID` 和 `trellis_wait` 的模板），使 `.trellis/scripts` 读取原生 `DSH_SESSION_ID` / `DSH_TRELLIS_CONTEXT_ID`。DSH CLI `@deepseek-ai/dsh@next` 当前为 `0.2.2-rc.4`（`latest` 为 `0.2.2-rc.1`）。`0.2.1-alpha.4` 起宿主优先检查显式 `engines.dsh`，仅未声明时才回退 DSH peer；其 `includePrerelease: true` 规则与 npm 默认匹配不同。本包的 npm peer 和 `engines.dsh` 允许已验证的 `0.2.0-rc.1..0.2.2-rc.4`（并以 `<0.2.1-0` / `<0.2.2-0` / `<0.2.3-0` 限定上界，不放行未验证的 `0.2.3-*` 预发布版本）、Cordis `4.1.0` 和 Schemastery `3.19.0`；通过准入仍不等于实际兼容，不应使用 `allow-version` 绕过缺失的 API。开发基线固定为 `0.2.0-rc.1`，隔离回归目标见开发章节的二十一个明确宿主，不代表测试了范围内所有版本。Web 配置只在具备对应 client surface 的 profile 中加载。参见[官方版本声明迁移说明](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.2.1-rc.2/docs/upgrade-guide/v0.2.1-alpha.3/plugin-engines-dsh/guide.md)。
+配套要求：项目的 Trellis 平台需包含 `dsh`，推荐使用 `npx @mindfoldhq/trellis@beta init --dsh`（`>=0.7.0-beta.4`，`@mindfoldhq/trellis@latest` `0.6.17` 尚未包含读取 `DSH_TRELLIS_CONTEXT_ID` 和 `trellis_wait` 的模板），使 `.trellis/scripts` 读取原生 `DSH_SESSION_ID` / `DSH_TRELLIS_CONTEXT_ID`。DSH CLI 的 `next` 和 `latest` 当前均为 `0.2.2-rc.5`。
+
+`0.2.1-alpha.4` 起宿主优先检查显式 `engines.dsh`，仅未声明时才回退 DSH peer。宿主的 `includePrerelease: true` 规则与 npm 默认匹配不同。本包的 npm peer 和 `engines.dsh` 允许矩阵中的 `0.2.0-rc.1..0.2.2-rc.5`，以 `<0.2.1-0` / `<0.2.2-0` / `<0.2.3-0` 限定各分支上界，并支持 Cordis `4.1.0` 和 Schemastery `3.19.0`。`<0.2.3-0` 会拒绝未验证的 `0.2.3-*` 预发布版本。版本准入只检查声明，`allow-version` 无法补齐宿主 API。开发基线固定为 `0.2.0-rc.1`，具体回归目标见开发章节的二十二个宿主。Web 配置只在具备对应 client surface 的 profile 中加载。参见[官方版本声明迁移说明](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.2.1-rc.2/docs/upgrade-guide/v0.2.1-alpha.3/plugin-engines-dsh/guide.md)。
 
 运行时需要 profile 提供 `sessionProjections` 服务；该依赖由插件的 `inject` 声明。自定义或精简 profile 若未组装此服务，需先加载 `@deepseek-ai/dsh-session-projection`，否则插件会等待依赖，不会退回直接扫描历史。
 
@@ -255,18 +257,19 @@ pnpm run test:compat 0.2.2-alpha.3 0.2.2-rc.1 # 新版 Cordis 生效配置与生
 pnpm run test:compat 0.2.2-rc.2 # 具名子代理与树根结算事件
 pnpm run test:compat 0.2.2-rc.3 # RC.3 动态工具与具名等待回归
 pnpm run test:compat 0.2.2-rc.4 # DeepSeek Messages 拒答与等待失败回归
-pnpm run test:compat # 默认跑全部二十一个显式目标
+pnpm run test:compat 0.2.2-rc.5 # RC.5 动态工具集与拒答回归
+pnpm run test:compat # 默认跑全部二十二个显式目标
 ```
 
-GitHub Actions 配置在 Windows / Linux 的 Node 24 环境执行锁定的 `0.2.0-rc.1` 安装、客户端构建、测试、全部二十一个宿主的隔离回归及打包检查。兼容清单来自 `scripts/compat-hosts.mjs`，测试另有独立期望值防止漏项或错误依赖配对。测试覆盖真实 Session/projection 的恢复、分叉、压缩和 checkpoint，临时项目的精确绑定与任务错误恢复，以及新版真实 Loader 的 volatile 更新、子代理目录/查询/驻留状态；新版专属测试在旧宿主明确跳过。另有编译客户端 React 渲染、slot 生命周期、原子保存与拒绝写入测试。远端 CI 结果以对应提交为准。
+GitHub Actions 配置在 Windows / Linux 的 Node 24 环境执行锁定的 `0.2.0-rc.1` 安装、客户端构建、测试、全部二十二个宿主的隔离回归及打包检查。兼容清单来自 `scripts/compat-hosts.mjs`，测试另有独立期望值防止漏项或错误依赖配对。测试覆盖真实 Session/projection 的恢复、分叉、压缩和 checkpoint，临时项目的精确绑定与任务错误恢复，以及新版真实 Loader 的 volatile 更新、子代理目录/查询/驻留状态。新版专属测试在旧宿主明确跳过。另有编译客户端 React 渲染、slot 生命周期、原子保存与拒绝写入测试。远端 CI 结果以对应提交为准。
 
 RC.2 集成用例运行真实 AgentLoop、Loader、ToolRuntime 和 Session，以本地脚本化模型响应验证三种 `toolUpdate` 能力：不支持、`addition-only`、`in-history`。覆盖插件启停的工具增删消息、Settings 重挂不重复注入、混合历史的恢复/分叉投影，以及 surface 替换后重建工具基线并重新注入面包屑。等待工具另覆盖目录损坏/不存在及卸载期间查询失败的错误保留与监听器清理。该验证不调用外部模型，也不替代 Web 浏览器或真实子代理派发验收；详情见 [2026-09-28 验证记录](https://github.com/SajoLuo/dsh-trellis/blob/main/docs/validation-dsh-0.1.7-rc.2.md)。
 
 0.2 集成用例另以真实 AgentLoop / ToolRuntime / Session 和实际 `trellis_wait` 验证失败工具历史的补齐顺序、错误分类、监听器清理及继续会话的消息配对。只注入 scheduler 故障和本地模型响应，不增加运行时补丁或自动重试；旧宿主按 `ToolCallRecovery` 能力明确跳过。还覆盖“目录查询期间收到成功结算、随后查询失败”的竞争，查询错误不能被伪装成成功。
 
-RC.4 用例通过本地 SSE 让官方 DeepSeek Messages 适配器返回拒答，验证失败尝试保留 token 用量、部分文本不进入对话历史，以及 `trellis_wait` 将具名子代理判为失败。见 [0.2.2-rc.4 验证记录](docs/validation-dsh-0.2.2-rc.4.md)。
+RC.4 和 RC.5 都运行拒答用例。测试通过本地 SSE 让官方 DeepSeek Messages 适配器返回拒答，验证失败尝试保留 token 用量、部分文本不进入对话历史，以及 `trellis_wait` 将具名子代理判为失败。见 [RC.4 验证记录](docs/validation-dsh-0.2.2-rc.4.md)。
 
-`test:compat` 在系统临时目录安装隔离依赖，打印目录路径供检查。失败时自动保留，设置 `KEEP_COMPAT_TMP=1` 可保留成功的副本。二十一个目标使用以下精确配对。增加宿主前先核对官方包并补齐测试。
+`test:compat` 在系统临时目录安装隔离依赖，打印目录路径供检查。失败时自动保留，设置 `KEEP_COMPAT_TMP=1` 可保留成功的副本。二十二个目标使用以下精确配对。增加宿主前先核对官方包并补齐测试。
 
 | DSH 目标 | Cordis | Schemastery | Include | Loader |
 |---|---|---|---|---|
@@ -277,7 +280,7 @@ RC.4 用例通过本地 SSE 让官方 DeepSeek Messages 适配器返回拒答，
 | 0.2.1-rc.1 / rc.2 / rc.3 / rc.4 / rc.5 | 4.0.5 | 3.18.5 | 1.0.10 | 1.0.6 |
 | 0.2.2-alpha.2 | 4.0.6-alpha.1 | 3.18.6-alpha.1 | 1.0.11-alpha.1 | 1.0.7-alpha.1 |
 | 0.2.2-alpha.3 | 4.0.6-alpha.2 | 3.18.6-alpha.2 | 1.0.11-alpha.2 | 1.0.7-alpha.2 |
-| 0.2.2-rc.1 / rc.2 / rc.3 / rc.4 | 4.1.0 | 3.19.0 | 1.1.0 | 1.1.0 |
+| 0.2.2-rc.1 / rc.2 / rc.3 / rc.4 / rc.5 | 4.1.0 | 3.19.0 | 1.1.0 | 1.1.0 |
 
 发布前还应使用隔离 `DSH_HOME` 启动真实 Web profile，验证配置保存/读回、整包及组件开关、重新挂载和卸载；不复用个人凭据或会话。代码 HMR、外部 CLI 快照刷新和浏览器跨宿主 release 刷新是不同验收项，不能用一次开关测试代替。当前结果与未覆盖项见 [2026-10-28 Alpha.2 验证记录](docs/validation-dsh-0.2.2-alpha.2.md)，[RC.4 记录](docs/validation-dsh-0.2.1-rc.4.md)、[RC.3 记录](docs/validation-dsh-0.2.1-rc.3.md)与 [RC.2 记录](docs/validation-dsh-0.2.1-rc.2.md)保留为历史证据。
 

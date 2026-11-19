@@ -1,6 +1,6 @@
 # DSH × Trellis E2E
 
-固定 DSH `0.2.2-rc.4`、Trellis CLI `0.7.0-beta.4` 和完整依赖锁文件。显式固定官方 app-boot 所需的 Group `1.1.0` peer，避免沿用旧锁文件的 alpha peer。每次运行创建新的临时 Git 项目、`DSH_HOME`、SDK profile、会话和日志目录。默认测试当前源码打包产物；`--published` 安装 npm 上与根 `package.json` 相同版本的正式包。不会切换或清理开发仓库，不使用个人 DSH 配置或凭据，不推送验收项目。
+固定 DSH `0.2.2-rc.5`、Trellis CLI `0.7.0-beta.4` 和完整依赖锁文件。显式固定官方 app-boot 所需的 Group `1.1.0` peer，避免沿用旧锁文件的 alpha peer。每次运行创建新的临时 Git 项目、`DSH_HOME`、SDK profile、会话和日志目录。默认测试当前源码打包产物。`--published` 安装 npm 上与根 `package.json` 相同版本的正式包。不会切换或清理开发仓库，不使用个人 DSH 配置或凭据，不推送验收项目。
 
 ## 本机运行
 
@@ -58,4 +58,4 @@ PTC 只向模型公开 `run_code`，通过实际 `tools.*` 绑定执行上述操
 
 这是一套可重复的完整软件链路测试，模型决策由本地脚本提供，不消耗 API 额度，也不证明真实大模型能自主遵循工作流。真实模型验收需要单独确认其配置与请求预算。Web UI 的表单和启停另由插件单元测试及隔离浏览器验收覆盖；这里不自动化桌面 GUI、跨版本 HMR 或 SSH 工作区。
 
-当前 RC.4 的 Windows 结果和原始证据位置见 [RC.4 验证记录](../docs/validation-dsh-0.2.2-rc.4.md)。Linux E2E 稍后安排。历史结果见 [RC.3](../docs/validation-dsh-0.2.2-rc.3.md)、[RC.2](../docs/validation-dsh-0.2.2-rc.2.md)、[RC.1](../docs/validation-dsh-0.2.2-rc.1.md)和 [2026-10-28](../docs/validation-e2e-2026-10-28.md)。
+历史结果见 [RC.4](../docs/validation-dsh-0.2.2-rc.4.md)、[RC.3](../docs/validation-dsh-0.2.2-rc.3.md)、[RC.2](../docs/validation-dsh-0.2.2-rc.2.md)、[RC.1](../docs/validation-dsh-0.2.2-rc.1.md)和 [2026-10-28](../docs/validation-e2e-2026-10-28.md)。
