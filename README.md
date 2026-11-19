@@ -50,7 +50,7 @@ DSH `0.1.6-alpha.2` 也可从 Web 侧栏“插件 → 添加插件”安装包�
 如果要从源码开发或验证尚未发布的版本，可以改用本地 `file:` 安装：
 
 ```powershell
-git clone https://github.com/SajoLuo/dsh-trellis.git
+git clone https://github.com/HomoLand/dsh-trellis.git
 cd dsh-trellis
 pnpm install --frozen-lockfile
 pnpm run build:client
@@ -173,13 +173,13 @@ DSH `0.2.2-alpha.2` 将工具执行移至独立 executor。自定义 profile 除
 
 - 七项 DSH peer 和 `engines.dsh` 新增 `^0.2.0-rc.1`；旧的 `^0.1.7-rc.1` 不接纳 0.2。开发依赖及锁文件升级到 0.2，Windows/Linux CI 配置继续覆盖四条旧宿主线。使用 0.2 宿主时请安装插件 0.1.10 或更新版本，0.1.9 不包含这项适配。
 - 跟随宿主的失败工具历史恢复，新增真实 AgentLoop 回归：工具尚未启动时记录 `TOOL_NOT_STARTED`，已执行但结果未提交时记录 `TOOL_OUTCOME_UNKNOWN`；保留原始错误和已提交结果，继续会话不自动重试等待，也不重复注入面包屑。
-- 已用隔离 DSH Web 验证正常版本准入、配置保存与读回、恢复继承值、整包/组件开关、冲突保留草稿以及页面重载。无需改变运行时代码、插件清单形态、安装命令或 Trellis 模板。完整范围见[验证记录](https://github.com/SajoLuo/dsh-trellis/blob/v0.1.10/docs/validation-dsh-0.2.0-rc.1.md)。
+- 已用隔离 DSH Web 验证正常版本准入、配置保存与读回、恢复继承值、整包/组件开关、冲突保留草稿以及页面重载。无需改变运行时代码、插件清单形态、安装命令或 Trellis 模板。完整范围见[验证记录](https://github.com/HomoLand/dsh-trellis/blob/v0.1.10/docs/validation-dsh-0.2.0-rc.1.md)。
 
 ### 0.1.9：DSH 0.1.7-rc.2 兼容验证
 
 - 新增 RC.2 隔离回归及 Windows/Linux CI 覆盖，修复兼容测试把非 RC.1 宿主错误归为旧版 Cordis 依赖的逻辑。
 - 使用真实 AgentLoop、Loader 和 Session 验证动态工具增删、Settings 重挂、面包屑去重、恢复/分叉及压缩后的重新注入；补充等待目录失败与卸载清理回归。
-- 本版不改变插件运行时代码、peer 范围、安装命令或 Trellis 生成模板；保留 RC.1 开发基线及两条旧宿主回归。验证范围与限制见[详细记录](https://github.com/SajoLuo/dsh-trellis/blob/v0.1.9/docs/validation-dsh-0.1.7-rc.2.md)。
+- 本版不改变插件运行时代码、peer 范围、安装命令或 Trellis 生成模板；保留 RC.1 开发基线及两条旧宿主回归。验证范围与限制见[详细记录](https://github.com/HomoLand/dsh-trellis/blob/v0.1.9/docs/validation-dsh-0.1.7-rc.2.md)。
 
 ### 0.1.8：DSH 0.1.7-rc.1 适配
 
@@ -275,7 +275,7 @@ pnpm run test:compat # 默认跑全部二十二个显式目标
 
 GitHub Actions 配置在 Windows / Linux 的 Node 24 环境执行锁定的 `0.2.0-rc.1` 安装、客户端构建、测试、全部二十二个宿主的隔离回归及打包检查。兼容清单来自 `scripts/compat-hosts.mjs`，测试另有独立期望值防止漏项或错误依赖配对。测试覆盖真实 Session/projection 的恢复、分叉、压缩和 checkpoint，临时项目的精确绑定与任务错误恢复，以及新版真实 Loader 的 volatile 更新、子代理目录/查询/驻留状态。新版专属测试在旧宿主明确跳过。另有编译客户端 React 渲染、slot 生命周期、原子保存与拒绝写入测试。远端 CI 结果以对应提交为准。
 
-RC.2 集成用例运行真实 AgentLoop、Loader、ToolRuntime 和 Session，以本地脚本化模型响应验证三种 `toolUpdate` 能力：不支持、`addition-only`、`in-history`。覆盖插件启停的工具增删消息、Settings 重挂不重复注入、混合历史的恢复/分叉投影，以及 surface 替换后重建工具基线并重新注入面包屑。等待工具另覆盖目录损坏/不存在及卸载期间查询失败的错误保留与监听器清理。该验证不调用外部模型，也不替代 Web 浏览器或真实子代理派发验收；详情见 [2026-09-28 验证记录](https://github.com/SajoLuo/dsh-trellis/blob/main/docs/validation-dsh-0.1.7-rc.2.md)。
+RC.2 集成用例运行真实 AgentLoop、Loader、ToolRuntime 和 Session，以本地脚本化模型响应验证三种 `toolUpdate` 能力：不支持、`addition-only`、`in-history`。覆盖插件启停的工具增删消息、Settings 重挂不重复注入、混合历史的恢复/分叉投影，以及 surface 替换后重建工具基线并重新注入面包屑。等待工具另覆盖目录损坏/不存在及卸载期间查询失败的错误保留与监听器清理。该验证不调用外部模型，也不替代 Web 浏览器或真实子代理派发验收；详情见 [2026-09-28 验证记录](https://github.com/HomoLand/dsh-trellis/blob/main/docs/validation-dsh-0.1.7-rc.2.md)。
 
 0.2 集成用例另以真实 AgentLoop / ToolRuntime / Session 和实际 `trellis_wait` 验证失败工具历史的补齐顺序、错误分类、监听器清理及继续会话的消息配对。只注入 scheduler 故障和本地模型响应，不增加运行时补丁或自动重试；旧宿主按 `ToolCallRecovery` 能力明确跳过。还覆盖“目录查询期间收到成功结算、随后查询失败”的竞争，查询错误不能被伪装成成功。
 
@@ -302,14 +302,14 @@ Host half 是直接由 `main` 加载的 ESM JavaScript；Web half 通过 tsdown 
 
 ## 自动发布
 
-`.github/workflows/publish.yml` 使用 npm [Trusted Publishing / OIDC](https://docs.npmjs.com/trusted-publishers/)，不保存长期 `NPM_TOKEN`。需先在 npm 的 `dsh-trellis` 包设置中绑定 GitHub 用户 `SajoLuo`、仓库 `dsh-trellis`、工作流文件名 `publish.yml`，并允许 `npm publish`；不需要单独的 dist-tag 管理权限。首次配置需要维护者交互确认。
+`.github/workflows/publish.yml` 使用 npm [Trusted Publishing / OIDC](https://docs.npmjs.com/trusted-publishers/)，不保存长期 `NPM_TOKEN`。需先在 npm 的 `dsh-trellis` 包设置中绑定 GitHub 组织 `HomoLand`、仓库 `dsh-trellis`、工作流文件名 `publish.yml`，并允许 `npm publish`；不需要单独的 dist-tag 管理权限。首次配置需要维护者交互确认。
 
 发布流程仅允许在本仓库的 `main` 手动触发，指定已有的稳定版标签。标签必须位于 main 历史中，且包名、标签版本、main 的包版本一致。工作流解析出不可变提交 SHA，让现有 Windows/Linux 完整测试矩阵和发布构建都使用同一个 SHA；测试失败或跳过整个测试任务时不发布。只有发布任务拥有 OIDC 权限，普通 push / PR 不会触发发布。
 
 启用后，由发布操作者执行，例如：
 
 ```powershell
-gh workflow run publish.yml --repo SajoLuo/dsh-trellis --ref main -f tag=v0.1.25
+gh workflow run publish.yml --repo HomoLand/dsh-trellis --ref main -f tag=v0.1.25
 ```
 
 GitHub-hosted runner 通过 OIDC 获取临时发布凭据并生成 provenance。这里的授权属于指定发布流程；本机直接运行 `npm publish` 仍按 npm 的交互认证规则执行。首次 OIDC 真发布前，不把配置或本地检查视为认证已经验证成功。

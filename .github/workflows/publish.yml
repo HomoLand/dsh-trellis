@@ -17,7 +17,7 @@ concurrency:
 
 jobs:
   release:
-    if: github.repository == 'SajoLuo/dsh-trellis' && github.ref == 'refs/heads/main'
+    if: github.repository == 'HomoLand/dsh-trellis' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     outputs:
       sha: ${{ steps.release.outputs.sha }}

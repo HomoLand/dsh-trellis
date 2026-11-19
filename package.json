@@ -17,11 +17,11 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/SajoLuo/dsh-trellis.git"
+    "url": "git+https://github.com/HomoLand/dsh-trellis.git"
   },
-  "homepage": "https://github.com/SajoLuo/dsh-trellis#readme",
+  "homepage": "https://github.com/HomoLand/dsh-trellis#readme",
   "bugs": {
-    "url": "https://github.com/SajoLuo/dsh-trellis/issues"
+    "url": "https://github.com/HomoLand/dsh-trellis/issues"
   },
   "keywords": [
     "deepseek-harness",
