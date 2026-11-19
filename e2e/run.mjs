@@ -182,15 +182,24 @@ for (const mode of ["native", "ptc"]) {
     model.setTask(state.task);
     assert.equal(state.context, `dsh_${rootId}`);
     const crumbs = () => events.filter(row => row.sessionId === rootId && row.event.type === "user/message" && row.event.data.source?.kind === "dsh-trellis");
+    const crumbText = (row) => (row.event.data.content ?? []).filter(block => block.type === "text").map(block => block.text).join("\n");
+    const assertValidCrumb = (row) => {
+      const text = crumbText(row);
+      assert.ok(text.startsWith("<system-reminder>\n") && text.endsWith("</system-reminder>"), `invalid breadcrumb envelope: ${text}`);
+      assert.doesNotMatch(text, /WORKFLOW-STATE BREADCRUMB CONTRACT|<!--/, "breadcrumb must not leak workflow.md HTML comment header");
+    };
     await prompt("observe");
     const stableCount = crumbs().length;
     assert.equal(stableCount, 2, "initial no_task and bound task must each inject once");
+    for (const crumb of crumbs()) assertValidCrumb(crumb);
     assert.equal(crumbs()[0].event.data.source.status, "no_task");
     assert.equal(crumbs().at(-1).event.data.source.task, state.task);
     await prompt("observe");
     assert.equal(crumbs().length, stableCount, "unchanged workflow state must dedupe");
     await prompt("foreign", `e2e-${mode}-foreign`);
-    assert.ok(events.some(row => row.sessionId.endsWith("foreign") && row.event.type === "user/message" && row.event.data.source?.kind === "dsh-trellis" && row.event.data.source.status === "no_task"));
+    const foreignCrumb = events.find(row => row.sessionId.endsWith("foreign") && row.event.type === "user/message" && row.event.data.source?.kind === "dsh-trellis" && row.event.data.source.status === "no_task");
+    assert.ok(foreignCrumb);
+    assertValidCrumb(foreignCrumb);
     for (const role of ["research", "implement", "check"]) {
       await prompt(role);
       const childId = model.children.get(role);
@@ -229,6 +238,7 @@ for (const mode of ["native", "ptc"]) {
     await prompt("finish");
     actionResult("finish", rootId);
     assert.equal(crumbs().at(-1).event.data.source.status, "no_task");
+    assertValidCrumb(crumbs().at(-1));
     assert.ok(!(await readdir(join(project, ".trellis/tasks"))).some(name => name.endsWith("-e2e-add")));
     await client.call("session/prompt", { sessionId: rootId, contentBlocks: [{ type: "text", text: "E2E_ROOT:cancel" }] });
     await Promise.race([model.waitStarted.promise, new Promise((_, reject) => { const timer = setTimeout(() => reject(new Error("cancel wait not started")), 30_000); timer.unref(); })]);

@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { appendFile, mkdtemp, mkdir, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { appendFile, mkdtemp, mkdir, readdir, readFile, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { registerCommands } from "../lib/commands.js";
@@ -328,7 +328,7 @@ test("trellis-doctor command validates arguments, attachments, working directory
     attachments: [{ type: "image", mimeType: "image/png", data: "abc" }],
   });
   assert.equal(badImg.kind, "error");
-  assert.match(badImg.text, /does not accept image attachments/);
+  assert.match(badImg.text, /does not accept attachments/);
 
   const checkOut = await doctor.handler({
     agent: { ctx, session: { header: { cwd: tmpdir(), id: "s1" } } },
@@ -364,4 +364,100 @@ test("trellis-doctor command validates arguments, attachments, working directory
   const writeErr = await runTrellisDoctor(writeFailRoot, { fs: failingFs, fix: true });
   assert.equal(writeErr.kind, "error");
   assert.match(writeErr.text, /Failed to update \.dsh\/DSH\.md: EACCES: read-only filesystem/);
+});
+
+test("trellis-doctor preserves arbitrary python launchers, dominant LF on mixed EOL, and pre-beta4 skip context", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "dsh-trellis-doctor-eol-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await seedBeta4Project(root, { pythonCmd: "python3.12", eol: "\n" });
+
+  // Inject one stray CRLF into an otherwise LF template file
+  const researchPath = join(root, ".dsh", "skills", "trellis-agent-research", "SKILL.md");
+  const researchOriginal = await readFile(researchPath, "utf8");
+  const mixedEol = `${"\n".repeat(15)}${researchOriginal}\r\n`;
+  await writeFile(researchPath, mixedEol, "utf8");
+
+  const fixed = await runTrellisDoctor(root, { fix: true });
+  assert.equal(fixed.kind, "success");
+  assert.equal(fixed.summary.fixed, 7);
+
+  const updatedResearch = await readFile(researchPath, "utf8");
+  assert.equal(updatedResearch.includes("\r\n"), false);
+  assert.match(updatedResearch, /Otherwise run `python3\.12 \.\/\.trellis\/scripts\/task\.py current --source`/);
+
+  const preBetaRoot = await mkdtemp(join(tmpdir(), "dsh-trellis-doctor-0617-"));
+  t.after(() => rm(preBetaRoot, { recursive: true, force: true }));
+  await writeTree(preBetaRoot, {
+    ".trellis/workflow.md": "# Legacy 0.6.17\n",
+    ".trellis/scripts/common/active_task.py": "# 0.6.17\n",
+  });
+  const preBeta = await runTrellisDoctor(preBetaRoot, { fix: false });
+  assert.match(preBeta.text, /likely pre-0\.7\.0-beta\.4/);
+});
+
+test("trellis-doctor surfaces unreadable templates, discloses partial fixes, and refuses external symlink escapes", async (t) => {
+  // Directory pretending to be a template file must fail explicitly, not pass silently
+  const dirErrRoot = await mkdtemp(join(tmpdir(), "dsh-trellis-doctor-dir-"));
+  t.after(() => rm(dirErrRoot, { recursive: true, force: true }));
+  await seedBeta4Project(dirErrRoot);
+  const guidePath = join(dirErrRoot, ".dsh", "DSH.md");
+  await rm(guidePath);
+  await mkdir(guidePath);
+  const dirReadErr = await runTrellisDoctor(dirErrRoot, { fix: false });
+  assert.equal(dirReadErr.kind, "error");
+  assert.match(dirReadErr.text, /Failed to read \.dsh\/DSH\.md/);
+
+  // Partial failure after updating first file must report the already-fixed file
+  const partialRoot = await mkdtemp(join(tmpdir(), "dsh-trellis-doctor-partial-"));
+  t.after(() => rm(partialRoot, { recursive: true, force: true }));
+  await seedBeta4Project(partialRoot);
+  let calls = 0;
+  const partialFailFs = {
+    ...nodeFs,
+    async replaceFileIfUnchanged(path, expected, content, signal, options) {
+      calls += 1;
+      if (calls === 2) throw new Error("EIO: disk failure");
+      return nodeFs.replaceFileIfUnchanged(path, expected, content, signal, options);
+    },
+  };
+  const partialRes = await runTrellisDoctor(partialRoot, { fs: partialFailFs, fix: true });
+  assert.equal(partialRes.kind, "error");
+  assert.match(partialRes.text, /Already updated before failure/);
+  assert.match(partialRes.text, /\[fixed\] \.dsh\/DSH\.md/);
+
+  // Multi-region partial fix note when one customized section leaves remaining regions canonicalizable
+  const multiRoot = await mkdtemp(join(tmpdir(), "dsh-trellis-doctor-multi-"));
+  t.after(() => rm(multiRoot, { recursive: true, force: true }));
+  await seedBeta4Project(multiRoot);
+  await writeFile(
+    join(multiRoot, ".dsh", "DSH.md"),
+    BETA4_DSH_MD.replace("| Utility commands | Not available | `/trellis-status`, `/trellis-finish` |", "| Utility commands | Custom | `/custom` |"),
+    "utf8",
+  );
+  const multiRes = await runTrellisDoctor(multiRoot, { fix: true });
+  assert.equal(multiRes.kind, "success");
+  assert.match(multiRes.text, /\[fixed\] \.dsh\/DSH\.md \(partial: 1 customized region\(s\) left untouched\)/);
+
+  // External symlink escape refusal via nodeFs without touching target outside root
+  const symBase = await mkdtemp(join(tmpdir(), "dsh-trellis-doctor-sym-"));
+  t.after(() => rm(symBase, { recursive: true, force: true }));
+  const symRoot = join(symBase, "repo");
+  const outsideSkillDir = join(symBase, "outside-skill");
+  await seedBeta4Project(symRoot);
+  await mkdir(outsideSkillDir, { recursive: true });
+  const outsideSkill = join(outsideSkillDir, "SKILL.md");
+  const legacySkill = beta4ResearchSkill("python");
+  await writeFile(outsideSkill, legacySkill, "utf8");
+  const localResearchDir = join(symRoot, ".dsh", "skills", "trellis-agent-research");
+  await rm(localResearchDir, { recursive: true, force: true });
+  await symlink(
+    outsideSkillDir,
+    localResearchDir,
+    process.platform === "win32" ? "junction" : "dir",
+  );
+
+  const symErr = await runTrellisDoctor(symRoot, { fix: true });
+  assert.equal(symErr.kind, "error");
+  assert.match(symErr.text, /outside project root/i);
+  assert.equal(await readFile(outsideSkill, "utf8"), legacySkill);
 });

@@ -125,10 +125,18 @@ function createNodeDom() {
     querySelector() { return null; },
     createElement,
     createElementNS: (_ns, tag) => createElement(tag),
-    createTextNode: (data) => ({
-      nodeType: 3, data: String(data), nodeValue: String(data),
-      ownerDocument: doc, parentNode: null, previousSibling: null, nextSibling: null,
-    }),
+    createTextNode: (data) => {
+      const node = {
+        nodeType: 3, data: String(data),
+        ownerDocument: doc, parentNode: null, previousSibling: null, nextSibling: null,
+      };
+      Object.defineProperty(node, "nodeValue", {
+        get() { return node.data; },
+        set(value) { node.data = String(value ?? ""); },
+        enumerable: true,
+      });
+      return node;
+    },
     createComment: (data) => ({
       nodeType: 8, data: String(data),
       ownerDocument: doc, parentNode: null, previousSibling: null, nextSibling: null,
@@ -217,6 +225,11 @@ async function mountCompiledSettingsPage(scope) {
     container,
     fire,
     changeInput,
+    async renderWith(scopeOverride, props = {}) {
+      await React.act(async () => {
+        root.render(React.createElement(Page, { scope: scopeOverride, t: (key) => key, view: "page", ...props }));
+      });
+    },
     async dispose() {
       await React.act(async () => { root.unmount(); });
       if (prev.act === undefined) delete globalThis.IS_REACT_ACT_ENVIRONMENT;
@@ -294,6 +307,141 @@ test("failed save state clears when external convergence restores clean state, a
     assert.equal(maxBytesInput().value, "");
     assert.equal(maxBytesInput().attributes["aria-invalid"], "true");
     assert.equal("disabled" in saveButton().attributes, true);
+  } finally {
+    await mounted.dispose();
+  }
+});
+
+test("preserves in-progress formatting across dirty/failed transitions and refreshes clean fields", async () => {
+  const listeners = new Set();
+  let snapshot = {
+    status: "ready",
+    writable: true,
+    revision: 1,
+    value: { ...DEFAULTS, maxBytes: 4096, projectRootMarkers: [".git"], skipKeyword: "no-trellis", pythonCmd: "py" },
+    base: {},
+    user: {},
+  };
+  const scope = {
+    getSnapshot: () => snapshot,
+    subscribe(fn) { listeners.add(fn); return () => listeners.delete(fn); },
+    async mutate() {
+      snapshot = { ...snapshot, revision: 2, value: { ...snapshot.value, maxBytes: 1024 } };
+      for (const fn of listeners) fn();
+      return false;
+    },
+  };
+
+  const mounted = await mountCompiledSettingsPage(scope);
+  try {
+    const byIdSuffix = (tag, suffix) => findElements(
+      mounted.container,
+      (el) => el.tagName === tag && (el.attributes.id ?? "").endsWith(suffix),
+    )[0];
+    const maxBytesInput = () => byIdSuffix("INPUT", "dsh-trellis-max-bytes");
+    const markersInput = () => byIdSuffix("TEXTAREA", "dsh-trellis-markers");
+    const skipInput = () => byIdSuffix("INPUT", "dsh-trellis-skip-keyword");
+    const pythonInput = () => byIdSuffix("INPUT", "dsh-trellis-python");
+    const saveButton = () => findElements(
+      mounted.container,
+      (el) => el.tagName === "BUTTON" && el.textContent === "save",
+    )[0];
+    const errorStatus = () => findElements(
+      mounted.container,
+      (el) => el.attributes.class === "dsh-trellis-error",
+    )[0];
+
+    assert.equal(maxBytesInput().attributes.inputmode ?? maxBytesInput().attributes.inputMode, "numeric");
+
+    // 1) ".git\na" backspaced to ".git\n" (dirty: true -> false) must not snap back
+    await mounted.changeInput(markersInput(), ".git\na");
+    assert.equal("disabled" in saveButton().attributes, false);
+    await mounted.changeInput(markersInput(), ".git\n");
+    assert.equal(markersInput().value, ".git\n");
+    assert.equal("disabled" in saveButton().attributes, true);
+
+    // Leading zeros and trailing whitespace remain editable too
+    await mounted.changeInput(maxBytesInput(), "04096");
+    await mounted.changeInput(pythonInput(), "py ");
+    assert.equal(maxBytesInput().value, "04096");
+    assert.equal(pythonInput().value, "py ");
+
+    // 2) failed: true -> false without snapping back ".git\n"
+    await mounted.changeInput(maxBytesInput(), "512");
+    await mounted.fire("click", saveButton());
+    assert.ok(errorStatus(), "failed banner should appear");
+    await mounted.changeInput(maxBytesInput(), "1024");
+    assert.equal(errorStatus(), undefined, "reverting to current snapshot clears failed state");
+    assert.equal(markersInput().value, ".git\n", "trailing newline must survive failed -> cleared");
+    assert.equal(pythonInput().value, "py ", "trailing space must survive failed -> cleared");
+
+    // 3) external snapshot update refreshes clean fields while dirty and preserves non-dirty trailing newline
+    await mounted.changeInput(maxBytesInput(), "2048");
+    snapshot = {
+      status: "ready",
+      writable: true,
+      revision: 3,
+      value: { ...snapshot.value, skipKeyword: "external-skip" },
+      base: {},
+      user: { skipKeyword: "external-skip" },
+    };
+    await React.act(async () => {
+      for (const fn of listeners) fn();
+    });
+    assert.equal(skipInput().value, "external-skip", "clean field refreshes on external update while dirty");
+    assert.equal(maxBytesInput().value, "2048", "dirty field stays intact");
+    assert.equal(markersInput().value, ".git\n", "non-dirty trailing newline stays intact");
+    assert.equal(pythonInput().value, "py ", "non-dirty trailing space stays intact");
+  } finally {
+    await mounted.dispose();
+  }
+});
+
+test("non-ready snapshots render loading/unavailable status banners instead of null and transition to ready", async () => {
+  const listeners = new Set();
+  let snapshot = { status: "loading" };
+  const scope = {
+    getSnapshot: () => snapshot,
+    subscribe(fn) { listeners.add(fn); return () => listeners.delete(fn); },
+  };
+  const mounted = await mountCompiledSettingsPage(scope);
+  try {
+    const statusText = () => findElements(
+      mounted.container,
+      (el) => el.attributes.class === "dsh-trellis-status" && el.attributes.role === "status",
+    )[0]?.textContent;
+
+    assert.equal(statusText(), "loading");
+
+    snapshot = { status: "unavailable" };
+    await React.act(async () => {
+      for (const fn of listeners) fn();
+    });
+    assert.equal(statusText(), "unavailable");
+
+    snapshot = { mode: "memory" };
+    await React.act(async () => {
+      for (const fn of listeners) fn();
+    });
+    assert.equal(statusText(), "unavailable");
+
+    snapshot = {
+      status: "ready",
+      writable: true,
+      revision: 1,
+      value: { ...DEFAULTS, maxBytes: 2048 },
+      base: {},
+      user: {},
+    };
+    await React.act(async () => {
+      for (const fn of listeners) fn();
+    });
+    assert.equal(statusText(), undefined);
+    const maxBytes = findElements(
+      mounted.container,
+      (el) => el.tagName === "INPUT" && (el.attributes.id ?? "").endsWith("dsh-trellis-max-bytes"),
+    )[0];
+    assert.equal(maxBytes.value, "2048");
   } finally {
     await mounted.dispose();
   }

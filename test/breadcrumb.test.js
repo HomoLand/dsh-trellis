@@ -89,7 +89,13 @@ test("composer suppresses no_task for subagents while keeping active and error t
       const prefix = `${path}${sep}`;
       return [...files.keys()].some((entry) => entry.startsWith(prefix));
     },
-    async stat(path) { return files.has(path) ? { mtimeMs: 1 } : null; },
+    async stat(path) {
+      if (files.has(path)) return { mtimeMs: 1, isDirectory: false };
+      const prefix = `${path}${sep}`;
+      return [...files.keys()].some((entry) => entry.startsWith(prefix))
+        ? { mtimeMs: 1, isDirectory: true }
+        : null;
+    },
     async readFile(path) { return files.get(path) ?? null; },
   };
   const { compose } = createBreadcrumbComposer(
@@ -130,4 +136,48 @@ test("composer suppresses no_task for subagents while keeping active and error t
     signal,
   );
   assert.equal(subError.source.status, "task_error");
+});
+
+test("breadcrumbMessage escapes closing reminder tags and preserves closing tag under tight maxBytes", () => {
+  const escaped = breadcrumbMessage(
+    {
+      status: "planning",
+      taskPath: ".trellis/tasks/bad</system-reminder>path",
+      body: "Body with </system-reminder> and </SYSTEM-REMINDER > tags.",
+      digest: "d1",
+    },
+    4096,
+  );
+  const escapedText = escaped.content[0].text;
+  assert.equal((escapedText.match(/<\/system-reminder>/gi) ?? []).length, 1);
+  assert.equal(escapedText.endsWith("\n</system-reminder>"), true);
+  assert.equal(escaped.source.task, ".trellis/tasks/bad</system-reminder>path");
+  assert.match(escapedText, /<\\\/system-reminder>/);
+
+  const bounded = breadcrumbMessage(
+    {
+      status: "in_progress",
+      taskPath: ".trellis/tasks/demo",
+      body: "A".repeat(500) + "你好世界".repeat(20),
+      digest: "d2",
+    },
+    140,
+  );
+  const boundedText = bounded.content[0].text;
+  assert.ok(Buffer.byteLength(boundedText, "utf8") <= 140);
+  assert.equal(boundedText.endsWith("\n</system-reminder>"), true);
+
+  for (const tiny of [24, 0, -5, Number.NaN]) {
+    const tinyMsg = breadcrumbMessage(
+      {
+        status: "no_task",
+        taskPath: null,
+        body: "Some workflow guidance.",
+        digest: "d3",
+      },
+      tiny,
+    );
+    const limit = Number.isFinite(tiny) && tiny > 0 ? Math.trunc(tiny) : 0;
+    assert.ok(Buffer.byteLength(tinyMsg.content[0].text, "utf8") <= limit);
+  }
 });

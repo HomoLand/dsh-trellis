@@ -1,7 +1,7 @@
 export const DEFAULTS = Object.freeze({
   enabled: true,
   maxBytes: 4096,
-  projectRootMarkers: Object.freeze([".git"]),
+  projectRootMarkers: Object.freeze([".trellis", ".git"]),
   skipKeyword: "no-trellis",
   pythonCmd: "",
   commandsEnabled: true,
@@ -28,13 +28,66 @@ export function fallbackValue(snapshot, field) {
 }
 
 export function makeDraft(snapshot) {
-  const value = record(snapshot.value);
+  const value = record(snapshot?.value);
   return Object.fromEntries(
     FIELD_NAMES.map((field) => [
       field,
       { mode: "clean", value: value[field] ?? DEFAULTS[field] },
     ]),
   );
+}
+
+function displayValue(field, value) {
+  if (field === "projectRootMarkers") {
+    return Array.isArray(value) ? value.join("\n") : String(value ?? "");
+  }
+  if (field === "enabled" || field === "commandsEnabled") {
+    return Boolean(value);
+  }
+  return String(value ?? "");
+}
+
+/** Merge-sync clean fields from snapshot while preserving uncommitted user text. */
+export function syncDraft(snapshot, draft) {
+  if (snapshot?.status !== "ready") return draft;
+  const value = record(snapshot.value);
+  const user = record(snapshot.user);
+  let changed = false;
+  const next = {};
+  for (const field of FIELD_NAMES) {
+    const entry = draft[field];
+    const target = value[field] ?? DEFAULTS[field];
+    if (entry.mode === "clean") {
+      if (!sameValue(entry.value, target)) {
+        changed = true;
+        next[field] = { mode: "clean", value: target };
+        continue;
+      }
+      next[field] = entry;
+      continue;
+    }
+    if (entry.mode === "set") {
+      if (displayValue(field, entry.value) === displayValue(field, target)) {
+        changed = true;
+        next[field] = { mode: "clean", value: target };
+        continue;
+      }
+    } else if (entry.mode === "unset") {
+      if (!Object.hasOwn(user, field)) {
+        changed = true;
+        next[field] = { mode: "clean", value: target };
+        continue;
+      }
+      const fallback = fallbackValue(snapshot, field);
+      if (!sameValue(entry.value, fallback)) {
+        changed = true;
+        next[field] = { mode: "unset", value: fallback };
+        continue;
+      }
+    }
+    next[field] = entry;
+  }
+  return changed ? next : draft;
 }
 
 export function editDraft(draft, field, value) {

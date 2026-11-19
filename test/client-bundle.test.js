@@ -89,8 +89,14 @@ test("package declares and emits a DSH Web client factory", async () => {
   const styleText = injectedTags[0].textContent;
   assert.match(styleText, /\.dsh-trellis-textarea\[aria-invalid="true"\]/);
   assert.match(styleText, /@media \(forced-colors:active\)\{[^}]*:focus-visible\{outline:2px solid Highlight/);
+  assert.match(styleText, /\.dsh-trellis-input\{[^}]*min-height:34px/);
+  assert.match(styleText, /\.dsh-trellis-field-head\{[^}]*flex-wrap:wrap/);
+  assert.match(styleText, /\.dsh-trellis-field-head\{[^}]*min-width:0/);
+  assert.match(styleText, /\.dsh-trellis-switch-row\{[^}]*min-width:0/);
+  assert.match(styleText, /\.dsh-trellis-reset-group\{[^}]*flex:none/);
   assert.match(styleText, /\.dsh-trellis-footer\{[^}]*flex-wrap:wrap/);
   assert.match(styleText, /\.dsh-trellis-footer\{[^}]*min-width:0/);
+  assert.match(styleText, /\.dsh-trellis-footer \.dsh-trellis-error\{[^}]*flex:1 1 min\(100%,220px\)/);
   const { zh, en } = registeredLocales["settings.dsh-trellis"];
   assert.deepEqual(Object.keys(zh).sort(), Object.keys(en).sort());
   for (const dispose of disposers.reverse()) dispose?.();

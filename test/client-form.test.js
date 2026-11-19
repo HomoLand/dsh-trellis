@@ -10,6 +10,7 @@ import {
   planDraft,
   planLanded,
   resetDraft,
+  syncDraft,
 } from "../src/client/form.js";
 import { settingsCardIdentity } from "../src/client/compat.js";
 
@@ -132,4 +133,49 @@ test("settings card uses the rc.8 keyed slot and rc.6 list fallback", () => {
     settingsCardIdentity({ kind: "list" }, "dsh-trellis"),
     { id: "dsh-trellis" },
   );
+});
+
+test("defaults include .trellis before .git to match server config", () => {
+  assert.deepEqual(DEFAULTS.projectRootMarkers, [".trellis", ".git"]);
+  const emptySnapshot = { status: "ready", writable: true, value: {}, base: {}, user: {} };
+  assert.deepEqual(makeDraft(emptySnapshot).projectRootMarkers.value, [".trellis", ".git"]);
+});
+
+test("syncDraft refreshes clean fields and preserves in-progress edits while reconciling exact convergence", () => {
+  const baseSnap = {
+    status: "ready",
+    writable: true,
+    revision: 1,
+    value: { ...DEFAULTS, maxBytes: 4096, projectRootMarkers: [".trellis", ".git"], skipKeyword: "no-trellis", pythonCmd: "py" },
+    base: {},
+    user: {},
+  };
+  let draft = makeDraft(baseSnap);
+  draft = editDraft(draft, "projectRootMarkers", ".trellis\n.git\n");
+  draft = editDraft(draft, "maxBytes", "04096");
+  draft = editDraft(draft, "pythonCmd", "py ");
+
+  const externalSnap = {
+    ...baseSnap,
+    revision: 2,
+    value: { ...baseSnap.value, skipKeyword: "skip-ext", commandsEnabled: false },
+  };
+  const synced = syncDraft(externalSnap, draft);
+  assert.equal(synced.skipKeyword.value, "skip-ext");
+  assert.equal(synced.commandsEnabled.value, false);
+  assert.equal(synced.projectRootMarkers.value, ".trellis\n.git\n");
+  assert.equal(synced.maxBytes.value, "04096");
+  assert.equal(synced.pythonCmd.value, "py ");
+
+  // Exact raw convergence promotes field back to clean so later updates land.
+  let converged = syncDraft(
+    { ...externalSnap, revision: 3, value: { ...externalSnap.value, pythonCmd: "py " } },
+    synced,
+  );
+  assert.equal(converged.pythonCmd.mode, "clean");
+  converged = syncDraft(
+    { ...externalSnap, revision: 4, value: { ...externalSnap.value, pythonCmd: "python3" } },
+    converged,
+  );
+  assert.equal(converged.pythonCmd.value, "python3");
 });

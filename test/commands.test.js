@@ -1,11 +1,15 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import {
+  parsePythonCmd,
   pythonCandidates,
   registerCommands,
   runTrellisScript,
 } from "../lib/commands.js";
+import { nodeFs } from "../lib/node-fs.js";
 
 const root = resolve("C:/trellis-command-test");
 
@@ -163,7 +167,7 @@ test("zero-input commands reject rc.8 command envelope payloads before touching 
   assert.equal(withText.kind, "error");
   assert.match(withText.text, /does not accept arguments/);
   assert.equal(withImage.kind, "error");
-  assert.match(withImage.text, /image attachments/);
+  assert.match(withImage.text, /attachments/);
   assert.equal(executed, false);
 });
 
@@ -372,4 +376,150 @@ test("trellis-status and trellis-finish treat Current task exit 1 cleanly, suppr
     signal: controller.signal,
   });
   assert.deepEqual(aborted, { kind: "error", text: "Trellis command cancelled." });
+});
+
+test("parsePythonCmd and pythonCandidates handle flags, quoted executables, and unquoted paths with spaces", async (t) => {
+  assert.deepEqual(parsePythonCmd("uv run --python 3.12 python"), {
+    command: "uv",
+    prefixArgs: ["run", "--python", "3.12", "python"],
+  });
+  assert.deepEqual(
+    parsePythonCmd('"C:\\Program Files\\Python312\\python.exe" -u'),
+    {
+      command: "C:\\Program Files\\Python312\\python.exe",
+      prefixArgs: ["-u"],
+    },
+  );
+  assert.deepEqual(pythonCandidates({ pythonCmd: "py -3" }, "win32"), [
+    { command: "py", prefixArgs: ["-3"] },
+  ]);
+
+  const dir = await mkdtemp(join(tmpdir(), "dsh-trellis py cmd "));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const exeWithSpaces = join(dir, "python 3.exe");
+  await writeFile(exeWithSpaces, "", "utf8");
+  assert.deepEqual(parsePythonCmd(exeWithSpaces), {
+    command: exeWithSpaces,
+    prefixArgs: [],
+  });
+});
+
+test("runTrellisScript sets UTF-8 env, scrubs case-insensitive host vars, and reports timeouts/stdout", async () => {
+  const saved = {
+    CODEX_THREAD_ID: process.env.CODEX_THREAD_ID,
+    dsh_session_id: process.env.dsh_session_id,
+    AWS_ACCESS_KEY_ID: process.env.AWS_ACCESS_KEY_ID,
+    TRELLIS_CONTEXT_ID: process.env.TRELLIS_CONTEXT_ID,
+  };
+  process.env.CODEX_THREAD_ID = "codex-outer";
+  process.env.dsh_session_id = "lowercase-outer";
+  process.env.AWS_ACCESS_KEY_ID = "akia-secret";
+  process.env.TRELLIS_CONTEXT_ID = "outer";
+
+  try {
+    const seen = [];
+    const okResult = await runTrellisScript(
+      { pythonCmd: "" },
+      root,
+      "   ",
+      ["current"],
+      {
+        platform: "linux",
+        async execFile(command, _args, options) {
+          seen.push({ command, env: options.env });
+          return { stdout: "Current task: (none)\n", stderr: "" };
+        },
+      },
+    );
+    assert.equal(okResult.kind, "success");
+    assert.deepEqual(
+      seen.map((entry) => entry.command),
+      ["python3"],
+    );
+    const childEnv = seen[0].env;
+    assert.equal(childEnv.PYTHONIOENCODING, "utf-8");
+    assert.equal(childEnv.PYTHONUTF8, "1");
+    assert.equal(childEnv.CODEX_THREAD_ID, undefined);
+    assert.equal(childEnv.dsh_session_id, undefined);
+    assert.equal(childEnv.AWS_ACCESS_KEY_ID, undefined);
+    assert.equal(childEnv.TRELLIS_CONTEXT_ID, undefined);
+
+    const timedOut = await runTrellisScript(
+      { pythonCmd: "python3" },
+      root,
+      "s1",
+      ["current"],
+      {
+        async execFile() {
+          throw Object.assign(new Error("killed"), { killed: true });
+        },
+      },
+    );
+    assert.equal(timedOut.kind, "error");
+    assert.match(timedOut.text, /timed out after 15s/);
+
+    const withStdout = await runTrellisScript(
+      { pythonCmd: "python3" },
+      root,
+      "s1",
+      ["current"],
+      {
+        async execFile() {
+          throw Object.assign(new Error("exit 2"), {
+            code: 2,
+            stdout: "Detailed failure on stdout",
+            stderr: "",
+          });
+        },
+      },
+    );
+    assert.equal(withStdout.kind, "error");
+    assert.match(withStdout.text, /Detailed failure on stdout/);
+  } finally {
+    for (const [k, v] of Object.entries(saved)) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+  }
+});
+
+test("trellis-doctor advertises input hint and runs when .trellis dir exists without task.py, while rejecting stray .trellis files", async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), "dsh-trellis-cmd-doc-"));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+
+  const { ctx, commands } = commandHarness();
+  const dispose = registerCommands(
+    ctx,
+    { pythonCmd: "", projectRootMarkers: [".trellis", ".git"] },
+    { fs: nodeFs },
+  );
+  t.after(dispose);
+
+  const doctorCmd = commands.get("trellis-doctor");
+  assert.deepEqual(doctorCmd.input, { hint: "[--check | --fix]" });
+
+  // Stray regular .trellis file with .git parent -> rejected as non-Trellis directory
+  const strayRepo = join(dir, "stray");
+  await mkdir(join(strayRepo, ".git"), { recursive: true });
+  await writeFile(join(strayRepo, ".trellis"), "not a directory", "utf8");
+  const strayResult = await doctorCmd.handler({
+    agent: { session: { header: { cwd: strayRepo, id: "s1" } } },
+    rawInput: "--check",
+    attachments: [],
+    signal: new AbortController().signal,
+  });
+  assert.equal(strayResult.kind, "error");
+  assert.match(strayResult.text, /No Trellis project found/);
+
+  // Real .trellis directory without workflow.md or task.py -> reaches doctor diagnostics
+  const partialRepo = join(dir, "partial");
+  await mkdir(join(partialRepo, ".trellis"), { recursive: true });
+  const partialResult = await doctorCmd.handler({
+    agent: { session: { header: { cwd: partialRepo, id: "s2" } } },
+    rawInput: "--check",
+    attachments: [],
+    signal: new AbortController().signal,
+  });
+  assert.equal(partialResult.kind, "error");
+  assert.match(partialResult.text, /active_task\.py is missing or unreadable/);
 });

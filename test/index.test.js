@@ -253,8 +253,8 @@ test("enabled plugin registers commands, wait tool, one pre-step listener, and d
     ["dsh-trellis.runtime"],
   );
   assert.deepEqual(
-    state.listeners.map(({ event }) => event),
-    ["agent/pre-step"],
+    state.listeners.map(({ event }) => event).sort(),
+    ["agent/disposed", "agent/pre-step"],
   );
   assert.deepEqual(state.registrations.filter((entry) => !entry.startsWith("inject:")).sort(), [
     "command:trellis-doctor",
@@ -284,6 +284,7 @@ test("settings namespace remounts the plugin from saved values", () => {
 
   state.publishSettings({ enabled: true, commandsEnabled: false });
   assert.deepEqual([...state.active].sort(), [
+    "listener:agent/disposed",
     "listener:agent/pre-step",
     `projection:${KEY}`,
     "shell-env:dsh-trellis-session",
@@ -295,6 +296,7 @@ test("settings namespace remounts the plugin from saved values", () => {
     "command:trellis-doctor",
     "command:trellis-finish",
     "command:trellis-status",
+    "listener:agent/disposed",
     "listener:agent/pre-step",
     `projection:${KEY}`,
     "shell-env:dsh-trellis-session",
@@ -311,6 +313,7 @@ test("settings provider detach falls back to the profile composition entry", () 
 
   state.publishSettings({ enabled: true, commandsEnabled: false });
   assert.deepEqual([...state.active].sort(), [
+    "listener:agent/disposed",
     "listener:agent/pre-step",
     `projection:${KEY}`,
     "shell-env:dsh-trellis-session",
@@ -422,27 +425,37 @@ test("pre-step reinjects after compaction and dedupes a newly resumed session", 
   assert.ok((await run()).messages.find(isBreadcrumbMessage));
 });
 
-test("reject and empty first-step decisions keep exactly one pending breadcrumb", async (t) => {
+test("reject clears pending breadcrumbs while main empty first-step keeps one pending breadcrumb", async (t) => {
   const { agent, run } = await preStepRuntime(t);
+  const unrelated = prompt("Keep unrelated user steer");
   const decision = { kind: "reject", reason: "host-owned reason" };
+  agent.inbox = inbox([unrelated]);
   assert.equal(await run({ decision }), decision);
-  const pending = agent.inbox.nextStep[0];
-  assert.ok(isBreadcrumbMessage(pending));
-  await run({ decision });
-  assert.deepEqual(agent.inbox.nextStep, [pending]);
+  assert.deepEqual(agent.inbox.nextStep, [unrelated]);
+
   const empty = { kind: "enter", messages: [], startsRequestSeries: true };
   assert.equal(await run({ decision: empty, step: 1 }), empty);
-  assert.deepEqual(agent.inbox.nextStep, [pending]);
+  const pending = agent.inbox.nextStep[0];
+  assert.ok(isBreadcrumbMessage(pending));
+  assert.deepEqual(agent.inbox.nextStep, [pending, unrelated]);
+  assert.equal(await run({ decision: empty, step: 1 }), empty);
+  assert.deepEqual(agent.inbox.nextStep, [pending, unrelated]);
+
+  assert.equal(await run({ decision }), decision);
+  assert.deepEqual(agent.inbox.nextStep, [unrelated]);
+
+  await run({ decision: empty, step: 1 });
+  assert.equal(agent.inbox.nextStep.filter(isBreadcrumbMessage).length, 1);
   const result = await run();
   assert.equal(result.messages.filter(isBreadcrumbMessage).length, 1);
-  assert.deepEqual(agent.inbox.nextStep, []);
+  assert.deepEqual(agent.inbox.nextStep, [unrelated]);
 });
 
 test("disabling removes only queued Trellis breadcrumbs and re-enabling reinjects once", async (t) => {
   const { state, agent, run } = await preStepRuntime(t);
   const unrelated = prompt("Keep the user's queued input");
   agent.inbox.nextStep.push(unrelated);
-  await run({ decision: { kind: "reject" } });
+  await run({ decision: { kind: "enter", messages: [], startsRequestSeries: true }, step: 1 });
   assert.equal(agent.inbox.nextStep.filter(isBreadcrumbMessage).length, 1);
   state.publishSettings({ ...fixtureConfig, enabled: false });
   assert.deepEqual(agent.inbox.nextStep, [unrelated]);
@@ -452,7 +465,7 @@ test("disabling removes only queued Trellis breadcrumbs and re-enabling reinject
 
 test("an unloaded pre-step listener cannot inject after its downstream continuation resolves", async (t) => {
   const { state, agent } = await preStepRuntime(t);
-  const listener = state.listeners.at(-1).listener;
+  const listener = state.listeners.findLast((entry) => entry.event === "agent/pre-step").listener;
   let release;
   const decision = { kind: "enter", messages: [prompt("Continue")] };
   const pending = listener({ agent, messages: decision.messages, step: 2 }, () => new Promise((resolve) => { release = resolve; }));
@@ -464,7 +477,7 @@ test("an unloaded pre-step listener cannot inject after its downstream continuat
 
 test("skip, disabled byte budget, missing project, and cancellation do not inject", async (t) => {
   const { state, agent, run, ctx } = await preStepRuntime(t);
-  await run({ decision: { kind: "reject" } });
+  await run({ decision: { kind: "enter", messages: [], startsRequestSeries: true }, step: 1 });
   assert.equal(agent.inbox.nextStep.length, 1);
   assert.equal((await run({ messages: [prompt("no-trellis")] })).messages.some(isBreadcrumbMessage), false);
   assert.equal(agent.inbox.nextStep.length, 0);
@@ -635,8 +648,8 @@ test("claimed inbox breadcrumbs do not leak or duplicate across step transitions
     return claimed.map((entry) => ({ ...entry }));
   };
 
-  // Step 1 queues breadcrumb in inbox.nextStep via reject
-  await run({ decision: { kind: "reject" }, step: 1 });
+  // Step 1 queues breadcrumb in inbox.nextStep on main empty first-step
+  await run({ decision: { kind: "enter", messages: [] }, step: 1 });
   assert.equal(agent.inbox.nextStep.filter(isBreadcrumbMessage).length, 1);
 
   // Step 2 claims queued breadcrumb, then skips -> must strip stale breadcrumb
@@ -650,7 +663,7 @@ test("claimed inbox breadcrumbs do not leak or duplicate across step transitions
   assert.equal(skipped.messages.length, 1);
 
   // Queue again then suppress via subagent no_task on step 2
-  await run({ decision: { kind: "reject" }, step: 1 });
+  await run({ decision: { kind: "enter", messages: [] }, step: 1 });
   const subClaimed = claimFromInbox([prompt("continue")]);
   agent.session = ctx.sessions.create("sub-claim", { meta: { cwd: project.root, origin: "subagent" } });
   const subResult = await run({
@@ -662,7 +675,7 @@ test("claimed inbox breadcrumbs do not leak or duplicate across step transitions
 
   // Bind task so desired changes from no_task -> planning; old claimed breadcrumb replaced cleanly
   agent.session = ctx.sessions.create("parent-claim", { meta: { cwd: project.root } });
-  await run({ decision: { kind: "reject" }, step: 1 });
+  await run({ decision: { kind: "enter", messages: [] }, step: 1 });
   const ownPointer = join(project.sessions, `${dshContextKey(agent.session.header.id)}.json`);
   await writeFile(ownPointer, JSON.stringify({ current_task: project.task }));
   const transitionClaimed = claimFromInbox([prompt("start work")]);
@@ -675,11 +688,11 @@ test("claimed inbox breadcrumbs do not leak or duplicate across step transitions
   assert.equal(crumbs.length, 1);
   assert.equal(crumbs[0].source.status, "planning");
 
-  // Step > 1 reject decision carrying claimed stale breadcrumb strips it from decision.messages
+  // Step > 1 reject decision carrying claimed stale breadcrumb strips it and clears inbox
   const rejectWithMsgs = { kind: "reject", messages: [...transitioned.messages] };
   const cleanedReject = await run({ messages: transitioned.messages, decision: rejectWithMsgs, step: 2 });
   assert.equal(cleanedReject.messages.some(isBreadcrumbMessage), false);
-  assert.equal(agent.inbox.nextStep.filter(isBreadcrumbMessage).length, 1);
+  assert.equal(agent.inbox.nextStep.filter(isBreadcrumbMessage).length, 0);
 });
 
 test("stopAll isolates disposer errors and clearInbox tolerates inactive inbox projection", async () => {
@@ -712,7 +725,7 @@ test("stopAll isolates disposer errors and clearInbox tolerates inactive inbox p
     inboxState.active.delete(`projection:${KEY}`);
   };
   apply(inboxState.ctx, fixtureConfig);
-  const listener = inboxState.listeners.at(-1).listener;
+  const listener = inboxState.listeners.findLast((entry) => entry.event === "agent/pre-step").listener;
   const throwingInbox = {
     get nextStep() {
       if (inactive) throw new Error("its projection registration is not active");
@@ -730,7 +743,7 @@ test("stopAll isolates disposer errors and clearInbox tolerates inactive inbox p
       },
       step: 1,
     },
-    async () => ({ kind: "reject" }),
+    async () => ({ kind: "enter", messages: [] }),
   );
   assert.equal(queued.length, 1);
   inactive = true;
@@ -904,6 +917,7 @@ test("volatile-update synchronously registers commands, tools, shellEnv, and pre
     "command:trellis-doctor",
     "command:trellis-finish",
     "command:trellis-status",
+    "listener:agent/disposed",
     "listener:agent/pre-step",
     `projection:${KEY}:1`,
     "shell-env:dsh-trellis-session",
@@ -996,4 +1010,139 @@ test("real Loader + SessionProjectionRegistry keep commands, tools, and shellEnv
   assert.deepEqual([...commands], []);
   assert.deepEqual([...tools], []);
   assert.deepEqual([...shellEnvs], []);
+});
+
+test("subagent reject and empty first step clear inbox instead of writing breadcrumbs back", async (t) => {
+  const project = await temporaryProject(t);
+  const { ctx, agent, run } = await preStepRuntime(t, {}, project.root);
+  agent.session = ctx.sessions.create("subagent-pre-step", {
+    meta: { cwd: project.root, origin: "subagent" },
+  });
+  await writeFile(
+    join(project.sessions, `${dshContextKey(agent.session.header.id)}.json`),
+    JSON.stringify({ current_task: project.task }),
+  );
+  const unrelated = prompt("Subagent unrelated steer");
+  const staleCrumb = createUserMessage({
+    content: [{ type: "text", text: "stale" }],
+    source: { kind: "dsh-trellis", form: "breadcrumb", status: "planning", task: project.task, digest: "old" },
+  });
+
+  agent.inbox = inbox([staleCrumb, unrelated]);
+  const rejectDecision = { kind: "reject" };
+  assert.equal(await run({ decision: rejectDecision, step: 1 }), rejectDecision);
+  assert.deepEqual(agent.inbox.nextStep, [unrelated]);
+
+  agent.inbox = inbox([staleCrumb, unrelated]);
+  const emptyFirst = { kind: "enter", messages: [] };
+  assert.equal(await run({ decision: emptyFirst, step: 1 }), emptyFirst);
+  assert.deepEqual(agent.inbox.nextStep, [unrelated]);
+
+  agent.inbox = inbox([]);
+  assert.equal(await run({ decision: rejectDecision, step: 1 }), rejectDecision);
+  assert.equal(await run({ decision: emptyFirst, step: 1 }), emptyFirst);
+  assert.deepEqual(agent.inbox.nextStep, []);
+});
+
+test("agent/disposed drops pending inbox references before plugin unload", async () => {
+  const state = harness();
+  apply(state.ctx, fixtureConfig);
+  const preStep = state.listeners.findLast((l) => l.event === "agent/pre-step").listener;
+  const onDisposed = state.listeners.filter((l) => l.event === "agent/disposed").map((l) => l.listener);
+  assert.equal(onDisposed.length, 1);
+
+  let removeCallsAfterDispose = 0;
+  let disposedFlag = false;
+  const pending = [];
+  const trackedInbox = {
+    get nextStep() {
+      return pending;
+    },
+    prepend(_lane, message) {
+      pending.unshift(message);
+    },
+    replace(id, message) {
+      pending[pending.findIndex((m) => m.id === id)] = message;
+    },
+    remove(id) {
+      if (disposedFlag) removeCallsAfterDispose++;
+      const index = pending.findIndex((m) => m.id === id);
+      if (index !== -1) pending.splice(index, 1);
+    },
+  };
+  const agent = {
+    session: { header: { cwd: fixtureCwd, id: "dispose-cleanup" }, surface: { nodes: [] } },
+    inbox: trackedInbox,
+  };
+  await preStep({ agent, messages: [], step: 1 }, async () => ({ kind: "enter", messages: [] }));
+  assert.equal(pending.length, 1);
+
+  disposedFlag = true;
+  for (const listener of onDisposed) listener({ agent });
+  await state.disposePlugin();
+  assert.equal(removeCallsAfterDispose, 0);
+});
+
+test("mountRuntime isolates previous synchronous and asynchronous teardown errors across reloads", async () => {
+  const state = harness({ settings: true });
+  const warnings = [];
+  state.ctx.logger = { warn: (...args) => warnings.push(args), error: (...args) => warnings.push(args) };
+  let commandDisposals = 0;
+  state.ctx.commands.register = (cmd) => {
+    state.active.add(`command:${cmd.name}`);
+    return () => {
+      state.active.delete(`command:${cmd.name}`);
+      if (cmd.name === "trellis-doctor") {
+        commandDisposals++;
+        throw new Error("sync teardown boom");
+      }
+    };
+  };
+  apply(state.ctx, { enabled: true, commandsEnabled: true });
+  commandDisposals = 0;
+  warnings.length = 0;
+  state.publishSettings({ enabled: true, commandsEnabled: false });
+  assert.equal(commandDisposals, 1);
+  assert.deepEqual([...state.active].sort(), [
+    "listener:agent/disposed",
+    "listener:agent/pre-step",
+    `projection:${KEY}`,
+    "shell-env:dsh-trellis-session",
+    "tool:trellis_wait",
+  ]);
+  assert.equal(warnings.length, 1);
+  await state.disposePlugin();
+
+  const asyncState = harness();
+  const asyncWarnings = [];
+  asyncState.ctx.logger = { warn: (...args) => asyncWarnings.push(args), error: (...args) => asyncWarnings.push(args) };
+  let projectionId = 0;
+  let cleanup;
+  asyncState.ctx.sessionProjections.register = () => {
+    const id = ++projectionId;
+    asyncState.active.add(`projection:${KEY}:${id}`);
+    return Promise.resolve({
+      stateOf: () => ({}),
+      dispose() {
+        asyncState.active.delete(`projection:${KEY}:${id}`);
+        if (id === 1) {
+          cleanup = Promise.withResolvers();
+          return cleanup.promise;
+        }
+      },
+    });
+  };
+  let maxBytes = 4096;
+  await apply(asyncState.ctx, {
+    maxBytes: { [Symbol.for("cosmokit.volatile.write")]: true, get: () => maxBytes },
+    commandsEnabled: false,
+  });
+  maxBytes = 1024;
+  asyncState.listeners.find((l) => l.event === "loader/volatile-update").listener();
+  cleanup.reject(new Error("async teardown boom"));
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(projectionId, 2);
+  assert.ok(asyncState.active.has(`projection:${KEY}:2`));
+  assert.equal(asyncWarnings.length, 1);
+  await asyncState.disposePlugin();
 });

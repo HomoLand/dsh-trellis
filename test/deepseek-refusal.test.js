@@ -3,13 +3,26 @@ import assert from "node:assert/strict";
 import { once } from "node:events";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
+import { createRequire } from "node:module";
+import semver from "semver";
 import llmPackage from "@deepseek-ai/dsh-llm/package.json" with { type: "json" };
 import { SubagentRuntime } from "@deepseek-ai/dsh-subagent";
 import { SessionQueryEngine } from "@deepseek-ai/dsh-session-query";
 import { agentRuntime } from "./helpers/agent-runtime.js";
 import { registerWaitTool } from "../lib/wait-tool.js";
 
-const hasDeepSeekRefusal = ["0.2.2-rc.4", "0.2.2-rc.5"].includes(llmPackage.version);
+const require = createRequire(import.meta.url);
+const hasDeepSeekAdapter = (() => {
+  try {
+    require.resolve("@deepseek-ai/dsh-llm-deepseek");
+    return true;
+  } catch {
+    return false;
+  }
+})();
+const hasDeepSeekRefusal =
+  hasDeepSeekAdapter &&
+  semver.satisfies(llmPackage.version, ">=0.2.2-rc.4", { includePrerelease: true });
 
 test("DeepSeek Messages refusal records usage and fails the Trellis child gate", {
   skip: !hasDeepSeekRefusal && "requires a verified DeepSeek Messages refusal adapter",

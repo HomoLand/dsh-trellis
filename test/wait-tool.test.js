@@ -20,13 +20,15 @@ test("installed DSH runtime exposes a supported catalog/name capability", () => 
 function harness(entries) {
   let tool;
   const handlers = new Set();
+  const disposedHandlers = new Set();
   const parent = {
     id: "parent-session",
     ctx: {
       on(event, handler) {
-        assert.equal(event, "subagent/end");
-        handlers.add(handler);
-        return () => handlers.delete(handler);
+        assert.ok(event === "subagent/end" || event === "agent/disposed");
+        const target = event === "subagent/end" ? handlers : disposedHandlers;
+        target.add(handler);
+        return () => target.delete(handler);
       },
     },
   };
@@ -52,8 +54,14 @@ function harness(entries) {
     emit(info) {
       for (const handler of [...handlers]) handler(info);
     },
+    emitDisposed(info) {
+      for (const handler of [...disposedHandlers]) handler(info);
+    },
     listenerCount() {
       return handlers.size;
+    },
+    disposedListenerCount() {
+      return disposedHandlers.size;
     },
   };
 }
@@ -461,4 +469,45 @@ test("two trellis_wait calls run concurrently through agent-loop without blockin
   const toolResults = agent.session.snapshotEvents().filter((event) => event.type === "tool/result");
   assert.deepEqual(toolResults.map((event) => event.data.message.toolCallId), ["wait-a", "wait-b"]);
   assert.ok(toolResults.every((event) => event.data.message.isError === false));
+});
+
+test("trellis_wait cancels on agent/disposed even when exec.signal is omitted", async () => {
+  let lookupSignal;
+  const state = harness([runningChild]);
+  try {
+    const pending = state.tool.execute({ subagent_id: runningChild.id }, { agent: state.parent });
+    await Promise.resolve();
+    assert.equal(state.listenerCount(), 1);
+    assert.equal(state.disposedListenerCount(), 1);
+    state.emitDisposed({ agent: { id: "other-agent" } });
+    assert.equal(state.listenerCount(), 1);
+    state.emitDisposed({ agent: state.parent });
+    await assert.rejects(pending, /calling agent was disposed/);
+    assert.equal(state.listenerCount(), 0);
+    assert.equal(state.disposedListenerCount(), 0);
+  } finally {
+    state.dispose();
+  }
+
+  let releaseLookup;
+  const lookupState = harness((signal) => {
+    lookupSignal = signal;
+    return new Promise((resolve) => {
+      releaseLookup = resolve;
+    });
+  });
+  try {
+    const pending = lookupState.tool.execute(
+      { subagent_id: runningChild.id },
+      { agent: lookupState.parent },
+    );
+    lookupState.emitDisposed({ agent: lookupState.parent });
+    assert.equal(lookupSignal.aborted, true);
+    releaseLookup([{ ...runningChild, activity: "inactive" }]);
+    await assert.rejects(pending, /calling agent was disposed/);
+    assert.equal(lookupState.listenerCount(), 0);
+    assert.equal(lookupState.disposedListenerCount(), 0);
+  } finally {
+    lookupState.dispose();
+  }
 });

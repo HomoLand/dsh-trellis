@@ -30,7 +30,7 @@ async function clientHarness(initialSlots = {}, options = {}) {
   const dependencies = new Map();
   const effects = [];
   const locales = new Set();
-  const snapshot = { status: "ready", writable: true, value: DEFAULTS, base: {}, user: {} };
+  const snapshot = options?.snapshot ?? { status: "ready", writable: true, value: DEFAULTS, base: {}, user: {} };
   const modernScope = { kind: "configForms", getSnapshot: () => snapshot, subscribe: () => () => {} };
   const legacyScope = { kind: "settingsScope", getSnapshot: () => snapshot, subscribe: () => () => {} };
   let declaration;
@@ -55,11 +55,21 @@ async function clientHarness(initialSlots = {}, options = {}) {
     slots: {
       spec(name) { return definitions.get(name); },
       inject(name, callback) {
+        let active = true;
         const record = { callback, dispose: definitions.has(name) ? callback() : undefined };
         const records = dependencies.get(name) ?? [];
         records.push(record);
         dependencies.set(name, records);
-        effects.push(() => { record.dispose?.(); });
+        const stop = () => {
+          if (!active) return;
+          active = false;
+          const idx = records.indexOf(record);
+          if (idx >= 0) records.splice(idx, 1);
+          record.dispose?.();
+          record.dispose = undefined;
+        };
+        effects.push(stop);
+        return stop;
       },
       register(opts, Component) {
         const id = `${opts.name}:${opts.key ?? opts.id}`;
@@ -75,6 +85,8 @@ async function clientHarness(initialSlots = {}, options = {}) {
   }
   return {
     registrations, styles: dom.styles, locales, modernScope, legacyScope,
+    watchers: (name) => (dependencies.get(name) ?? []).length,
+    attach(service) { pendingInjections.get(service)?.(ctx); },
     mount(name, spec) {
       definitions.set(name, spec);
       for (const record of dependencies.get(name) ?? []) {
@@ -211,4 +223,45 @@ test("multiple mounted settings instances emit unique useId prefixes and aria-de
     assert.match(combined, new RegExp(`id="${id}-hint"`));
   }
   h.dispose();
+});
+
+test("configForms attachment disposes pending legacy slots.inject watchers before target slots mount", async () => {
+  const h = await clientHarness({}, { services: ["settingsScope"] });
+  assert.equal(h.watchers("settings.plugin.item"), 1);
+  assert.equal(h.watchers("plugins.bundle.config"), 1);
+  assert.equal(h.registrations.size, 0);
+
+  h.attach("configForms");
+  assert.equal(h.watchers("settings.plugin.item"), 1, "legacy item watcher must be disposed");
+  assert.equal(h.watchers("plugins.bundle.config"), 1, "legacy bundle watcher must be disposed");
+
+  h.mount("settings.plugin.item", { kind: "keyed" });
+  h.mount("plugins.bundle.config", { kind: "keyed" });
+  assert.deepEqual(
+    [...h.registrations.keys()].sort(),
+    ["plugins.bundle.config:dsh-trellis", "settings.plugin.item:dsh-trellis"],
+  );
+  for (const entry of h.registrations.values()) {
+    assert.equal(entry.options.inject().scope, h.modernScope);
+  }
+  h.dispose();
+  assert.equal(h.watchers("settings.plugin.item"), 0);
+  assert.equal(h.watchers("plugins.bundle.config"), 0);
+});
+
+test("non-ready snapshots render status indicators in both page and card presentations", async () => {
+  for (const [status, expectedKey] of [["loading", "loading"], ["unavailable", "unavailable"]]) {
+    const h = await clientHarness(
+      { "settings.plugin.item": { kind: "keyed" }, "plugins.bundle.config": { kind: "keyed" } },
+      { modern: true, snapshot: { status } },
+    );
+    const page = h.render("plugins.bundle.config", "page");
+    assert.match(page, new RegExp(`data-status="${status}"`));
+    assert.match(page, new RegExp(`class="dsh-trellis-status"[^>]*>${expectedKey}<`));
+
+    const card = h.render("settings.plugin.item");
+    assert.match(card, new RegExp(`data-status="${status}"`));
+    assert.match(card, new RegExp(`class="dsh-trellis-badge"[^>]*>${expectedKey}<`));
+    h.dispose();
+  }
 });

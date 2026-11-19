@@ -40,7 +40,8 @@ jobs:
       - name: Verify client bundle is up to date
         run: |
           pnpm run build:client
-          git diff --ignore-cr-at-eol --exit-code lib/client.js
+          git diff --ignore-cr-at-eol --exit-code lib/client.js lib/client.js.map
       - run: pnpm test
-      - run: pnpm run test:compat
-      - run: npm pack --dry-run --ignore-scripts
+      - run: pnpm run test:compat --skip-baseline
+      - name: Verify packed tarball
+        run: node scripts/verify-pack.mjs

@@ -5,10 +5,28 @@ import { registerWaitTool } from "../lib/wait-tool.js";
 const row = { id: "checker-id", name: "checker", createdAt: 123, mode: "continuable" };
 function harness(t, options = {}) {
   const handlers = new Set();
-  const parent = { id: "reviewer-id", ctx: { on() { throw new Error("wrong parent scope"); } } };
-  const root = { id: "root-id", ctx: { on(event, fn) {
-    assert.equal(event, "subagent/end"); handlers.add(fn); return () => handlers.delete(fn);
-  } } };
+  const disposedHandlers = new Set();
+  const parent = {
+    id: "reviewer-id",
+    ctx: {
+      on(event, fn) {
+        if (event !== "agent/disposed") throw new Error("wrong parent scope");
+        disposedHandlers.add(fn);
+        return () => disposedHandlers.delete(fn);
+      },
+    },
+  };
+  const root = {
+    id: "root-id",
+    ctx: {
+      on(event, fn) {
+        assert.ok(event === "subagent/end" || event === "agent/disposed");
+        const target = event === "subagent/end" ? handlers : disposedHandlers;
+        target.add(fn);
+        return () => target.delete(fn);
+      },
+    },
+  };
   let tool;
   let observations = 0;
   let disposals = 0;
@@ -44,9 +62,10 @@ function harness(t, options = {}) {
   });
   t.after(dispose);
   return {
-    tool, dispose, handlers,
+    tool, dispose, handlers, disposedHandlers, parent, root,
     run: (name = "reviewer/checker", signal) => tool.execute({ subagent_id: name }, { agent: parent, signal }),
     end(info = {}) { for (const fn of [...handlers]) fn({ id: row.id, parentSessionId: parent.id, stopReason: "completed", ...info }); },
+    emitDisposed(agent) { for (const fn of [...disposedHandlers]) fn({ agent }); },
     observed: () => observations,
     disposed: () => disposals,
   };
@@ -153,8 +172,8 @@ test("root session rejects lead and slash paths without leaking resources", asyn
     id: "root-id",
     ctx: {
       on(event, fn) {
-        assert.equal(event, "subagent/end");
-        handlers.add(fn);
+        assert.ok(event === "subagent/end" || event === "agent/disposed");
+        if (event === "subagent/end") handlers.add(fn);
         return () => handlers.delete(fn);
       },
     },
@@ -208,4 +227,17 @@ test("root session rejects lead and slash paths without leaking resources", asyn
   );
   assert.equal(disposals, 2);
   assert.equal(handlers.size, 0);
+});
+
+test("named wait cancels when parent or root emits agent/disposed without exec.signal", async (t) => {
+  for (const target of ["parent", "root"]) {
+    const h = harness(t);
+    const pending = h.run();
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(h.handlers.size, 1);
+    h.emitDisposed(target === "parent" ? h.parent : h.root);
+    await assert.rejects(pending, /calling agent was disposed/);
+    assert.equal(h.handlers.size, 0);
+    assert.equal(h.disposedHandlers.size, 0);
+  }
 });

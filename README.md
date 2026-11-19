@@ -5,7 +5,7 @@ DeepSeek Harness (dsh) host 插件：把 [Trellis](https://github.com/mindfold-a
 1. **每轮 workflow-state 面包屑注入** — 在每个 `agent/pre-step`，解析项目 `.trellis/workflow.md` 的 `[workflow-state:*]` 块 + 活跃任务状态（no_task / task_error / planning / in_progress），把对应面包屑注入会话（与 `dsh-agent-instructions` 的注入管道相同）。未变化不重复注入；被压缩后自动重注入；提示词里出现独立单词 `no-trellis` 可跳过当轮。
 2. **隔离的原生会话上下文身份（per-session isolation）** — 从当前 agent 各自的 DSH 原生 session header 生成受管的 `DSH_TRELLIS_CONTEXT_ID`，让 `task.py start/create/current` 解析到会话级 active-task 指针：父会话与子代理之间保持按会话隔离的原生 DSH 会话身份，不共享或回退到父上下文；同一会话内由 shell 或插件命令启动的子进程则显式传入该会话自身的 DSH 身份。
 3. **原生子代理同步** — 安装插件后，Trellis 角色可用 DSH continuable 后台子代理；主会话先继续独立工作，耗尽后可调用事件驱动的 `trellis_wait`。它监听 DSH 的 `subagent/end`，利用 lifecycle 自带的 run/provider/output-block 元数据返回 `completed / failed / aborted / unknown` 的 fail-closed 结论。`error`、`max-tokens`、`refusal` 和未来未知失败原因都不会被误报成通过。宿主提供可靠的原生通知/yield 路径时，父会话也可结束当前轮等待唤醒；仍须读取实际结果与报告。
-4. **`/trellis` 命令** — `/trellis-status`（活跃任务 + git 状态）、`/trellis-finish`（只读检查 + 安全收尾清单，不提前清 active-task 指针）、`/trellis-doctor`（`--check` 只读体检 / `--fix` 幂等修补项目内 `.dsh/` 与 `.trellis/` 的 DSH 模板漂移，保留原文件 LF/CRLF 换行且不覆盖自定义改动）。命令输出不进模型历史；真正的会话收尾走技能面 `/trellis-finish-work`，由技能先归档再写 journal。rc.8 下上述命令均设 `recordInput: false` 并拒绝图片附件，`/trellis-status` 与 `/trellis-finish` 为零输入命令，`/trellis-doctor` 仅接受 `--check` / `--fix`。
+4. **`/trellis` 命令** — `/trellis-status`（活跃任务 + git 状态）、`/trellis-finish`（只读检查 + 安全收尾清单，不提前清 active-task 指针）、`/trellis-doctor`（`--check` 只读体检 / `--fix` 幂等修补项目内 `.dsh/` 与 `.trellis/` 的 DSH 模板漂移，保留原文件 LF/CRLF 换行且不覆盖自定义改动）。命令输出不进模型历史；真正的会话收尾走技能面 `/trellis-finish-work`，由技能先归档再写 journal。rc.8 下上述命令均设 `recordInput: false` 并拒绝附件，`/trellis-status` 与 `/trellis-finish` 为零输入命令，`/trellis-doctor` 仅接受 `--check` / `--fix`。
 5. **Web 配置菜单** — DSH `0.1.7-rc.1` 的“插件 → dsh-trellis”详情页直接显示全部六个配置项；保留 `0.1.6-alpha.2` 详情页与旧版 RC 卡片。新版支持带修订号的原子保存、恢复 profile 继承值和冲突时保留草稿。配置里的 `enabled=false` 会停用工作流功能但保留表单；插件管理器的整包或组件开关则会连同表单一起卸载。
 
 非 Trellis 项目不注入面包屑；命令只有被用户显式调用时才会检查并返回“未初始化 Trellis”。
@@ -27,10 +27,10 @@ dsh plugin --profile tui add dsh-trellis
 
 DSH `0.2.0-rc.2` 的 macOS / Windows 桌面端可在菜单栏“Manage dsh command”中安装或管理内置 `dsh` 命令，无需单独安装 Node 或 pnpm。先用 `dsh --version` 确认 PATH 中实际调用的版本；旧的全局 CLI 可能与桌面端不同。桌面端默认使用 `desktop` profile，其他 profile 仍需分别安装。
 
-新版本刚发布时，插件页预览的版本可能与安装器最终选择的版本不同。需要本版插件 `0.1.23` 时，在插件页输入 `dsh-trellis@0.1.23`，或显式安装到实际使用的 profile：
+新版本刚发布时，插件页预览的版本可能与安装器最终选择的版本不同。需要本版插件 `0.1.25` 时，在插件页输入 `dsh-trellis@0.1.25`，或显式安装到实际使用的 profile：
 
 ```powershell
-dsh plugin --profile desktop add dsh-trellis@0.1.23
+dsh plugin --profile desktop add dsh-trellis@0.1.25
 # Web / headless 用户将 desktop 替换为对应 profile 名称。
 ```
 
@@ -81,6 +81,14 @@ npx @mindfoldhq/trellis@beta init --dsh
 运行时需要 profile 提供 `sessionProjections` 服务；该依赖由插件的 `inject` 声明。自定义或精简 profile 若未组装此服务，需先加载 `@deepseek-ai/dsh-session-projection`，否则插件会等待依赖，不会退回直接扫描历史。
 
 DSH `0.2.2-alpha.2` 将工具执行移至独立 executor。自定义 profile 除 `tools` 外还需选择 `@deepseek-ai/dsh-tool-executor-native`，或具备 PTC runtime 的 `@deepseek-ai/dsh-tool-executor-ptc`；标准宿主负责组装。插件只注册 `trellis_wait`，使用宿主选定的执行器，不自行切换执行模式。
+
+### 0.1.25 · 审查加固与可靠性修复
+
+- **工作流与面包屑解析加固**：`parseWorkflowStateBlocks` 跳过 `workflow.md` 的 HTML 注释头与代码围栏并忽略空块；`breadcrumbMessage` 转义 `</system-reminder>` 并在 `maxBytes` 预算内预留闭合标签，避免 `@mindfoldhq/trellis@0.7.0-beta.4` 默认模板首轮被截断破坏。
+- **子代理收件箱与生命周期保护**：`agent/pre-step` 在 `decision.kind === "reject"` 或子代理空首步时清空调度而不回写 `agent.inbox.nextStep`，并监听 `agent/disposed` 释放 `pendingInboxes` 引用、取消无信号 `trellis_wait` 等待及容错热重载卸载异常。
+- **默认根标记与命令执行增强**：前后端默认 `projectRootMarkers` 同步更新为 `[".trellis", ".git"]`（校验 `.trellis` 为目录），支持非 Git 或 monorepo 子包项目；`/trellis-*` 命令支持拆分带参数的 `pythonCmd`（如 `py -3`）并透出 `stdout`/超时诊断，`/trellis-doctor` 仅依赖 `.trellis/` 目录即可运行。
+- **Web 配置面板与测试质量提升**：设置卡片改用按字段合并刷新非脏快照（保留输入中的尾随换行/空格/前导零），非 `ready` 状态呈现 `loading`/`unavailable` 提示，优化窄屏/高 DPI 弹性换行与清理 `slots.inject` 监听器。
+- **体检边界、兼容脚本与 CI 校验**：`/trellis-doctor` 与 `nodeFs` 增强软链根边界限制、权限与目录错误识别、主流换行保留及部分修复报告；兼容矩阵支持汇总全宿主失败摘要，CI 新增实包 `.tgz` 导入冒烟与 `lib/client.js.map` 一致性检查。
 
 ### 0.1.23 · 模板体检修复
 
@@ -212,10 +220,14 @@ Headless、rc.6 或需要声明部署默认值时，仍可在 profile 的 `cordi
 ```yaml
 - id: dsh-trellis
   config:
+    enabled: true           # 关闭后立即卸载面包屑、命令、会话变量与等待工具
+    commandsEnabled: true   # 是否注册 /trellis-status、/trellis-finish、/trellis-doctor
     maxBytes: 4096          # 面包屑注入的字节预算（0 = 关闭注入）
+    projectRootMarkers:
+      - .trellis
+      - .git                # 向上查找项目根的标记（任一命中即停；.trellis 须为目录）
     skipKeyword: no-trellis # 提示词中的独立单词可跳过当轮注入（空 = 禁用）
     pythonCmd: ""           # 空 = 自动选择：Windows 先 py -3 再 python；其他系统先 python3 再 python
-    commandsEnabled: true
 ```
 
 ### 0.1.6：Trellis 会话隔离与任务错误兼容
@@ -297,7 +309,7 @@ Host half 是直接由 `main` 加载的 ESM JavaScript；Web half 通过 tsdown 
 启用后，由发布操作者执行，例如：
 
 ```powershell
-gh workflow run publish.yml --repo SajoLuo/dsh-trellis --ref main -f tag=v0.1.23
+gh workflow run publish.yml --repo SajoLuo/dsh-trellis --ref main -f tag=v0.1.25
 ```
 
 GitHub-hosted runner 通过 OIDC 获取临时发布凭据并生成 provenance。这里的授权属于指定发布流程；本机直接运行 `npm publish` 仍按 npm 的交互认证规则执行。首次 OIDC 真发布前，不把配置或本地检查视为认证已经验证成功。

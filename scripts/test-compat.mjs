@@ -8,13 +8,22 @@ import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
 import { SUPPORTED_HOSTS, createCompatManifest } from "./compat-hosts.mjs";
 
-const versions = process.argv.slice(2);
-if (versions.length === 0) versions.push(...SUPPORTED_HOSTS);
+const root = fileURLToPath(new URL("../", import.meta.url));
+const original = JSON.parse(await readFile(join(root, "package.json"), "utf8"));
+const rawArgs = process.argv.slice(2).filter((arg) => arg !== "--");
+const skipBaseline = rawArgs.includes("--skip-baseline");
+const versions = rawArgs.filter((arg) => arg !== "--skip-baseline");
+const baseline = original.devDependencies?.["@deepseek-ai/dsh-agent-loop"];
+if (versions.length === 0) {
+  versions.push(
+    ...(skipBaseline && baseline
+      ? SUPPORTED_HOSTS.filter((version) => version !== baseline)
+      : SUPPORTED_HOSTS),
+  );
+}
 if (versions.some((version) => !SUPPORTED_HOSTS.includes(version))) {
   throw new Error(`Supported test hosts: ${SUPPORTED_HOSTS.join(", ")}`);
 }
-const root = fileURLToPath(new URL("../", import.meta.url));
-const original = JSON.parse(await readFile(join(root, "package.json"), "utf8"));
 const pnpmCli = process.env.npm_execpath;
 if (!pnpmCli || !process.env.npm_config_user_agent?.startsWith("pnpm/")) {
   throw new Error("Run this script with pnpm run test:compat [host-version].");
@@ -59,6 +68,7 @@ for (const signal of ["SIGINT", "SIGTERM"]) {
   });
 }
 
+const results = [];
 for (const version of versions) {
   const cwd = await mkdtemp(join(tmpdir(), `dsh-trellis-compat-${version}-`));
   activeTmpDir = cwd;
@@ -71,6 +81,11 @@ for (const version of versions) {
     runPnpm(installArgs, cwd);
     run(process.execPath, ["--test", "test/*.test.js"], cwd);
     succeeded = true;
+    results.push({ version, status: "passed" });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(`DSH ${version} failed: ${message}`);
+    results.push({ version, status: "failed", error: message, cwd });
   } finally {
     activeTmpDir = undefined;
     if (succeeded && !keepTmp) {
@@ -79,4 +94,13 @@ for (const version of versions) {
       console.error(`Preserving compat temp dir: ${cwd}`);
     }
   }
+}
+
+const failed = results.filter((entry) => entry.status === "failed");
+console.log(`Compat summary: ${results.length - failed.length}/${results.length} passed (${results.map((entry) => `${entry.version}:${entry.status}`).join(", ")})`);
+if (failed.length > 0) {
+  for (const entry of failed) {
+    console.error(`  - ${entry.version}: ${entry.error} (${entry.cwd})`);
+  }
+  process.exitCode = 1;
 }

@@ -71,10 +71,8 @@ function registerForm(ctx, scope) {
 }
 
 function registerFallbackCard(ctx, scope, isFormRegistered, disposers) {
-  registerForms(ctx, scope, (registerSlot) => {
-    if (isFormRegistered()) return () => {};
+  const track = (off) => {
     let active = true;
-    const off = registerSlot();
     const dispose = () => {
       if (!active) return;
       active = false;
@@ -83,11 +81,18 @@ function registerFallbackCard(ctx, scope, isFormRegistered, disposers) {
     };
     disposers.add(dispose);
     return dispose;
+  };
+  const injectDisposers = registerForms(ctx, scope, (registerSlot) => {
+    if (isFormRegistered()) return () => {};
+    return track(registerSlot());
   });
+  for (const offInject of injectDisposers) {
+    if (typeof offInject === "function") track(offInject);
+  }
 }
 
 function registerForms(ctx, scope, wrap = (registerSlot) => registerSlot()) {
-  ctx.slots.inject("settings.plugin.item", () =>
+  const offItem = ctx.slots.inject("settings.plugin.item", () =>
     wrap(() =>
       ctx.slots.register(
         {
@@ -107,7 +112,7 @@ function registerForms(ctx, scope, wrap = (registerSlot) => registerSlot()) {
   // Alpha.2 owns third-party configuration on the bundle page. Slot injection
   // waits for its owner and disposes registrations when either side unloads;
   // the absent slot on RC hosts is harmless, as is the absent legacy slot here.
-  ctx.slots.inject("plugins.bundle.config", () =>
+  const offBundle = ctx.slots.inject("plugins.bundle.config", () =>
     wrap(() =>
       ctx.slots.register(
         {
@@ -120,4 +125,6 @@ function registerForms(ctx, scope, wrap = (registerSlot) => registerSlot()) {
       ),
     ),
   );
+
+  return [offItem, offBundle];
 }

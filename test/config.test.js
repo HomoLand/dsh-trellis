@@ -5,11 +5,14 @@ import {
   hasLiveConfig,
   loadOptionalSettingsModule,
   resolveConfig,
+  settingsModule,
   volatile,
 } from "../lib/config.js";
 
 test("resolveConfig leaves pythonCmd empty for platform-aware auto detection", () => {
   assert.equal(resolveConfig({}).pythonCmd, "");
+  assert.deepEqual(resolveConfig({}).projectRootMarkers, [".trellis", ".git"]);
+  assert.equal(settingsModule, loadOptionalSettingsModule());
   assert.equal(
     resolveConfig({ pythonCmd: "  py-custom  " }).pythonCmd,
     "py-custom",
@@ -81,7 +84,7 @@ test("hasLiveConfig and resolveConfig safely handle null, non-objects, and inval
     assert.deepEqual(resolveConfig(badInput), {
       enabled: true,
       maxBytes: 4096,
-      projectRootMarkers: [".git"],
+      projectRootMarkers: [".trellis", ".git"],
       skipKeyword: "no-trellis",
       pythonCmd: "",
       commandsEnabled: true,

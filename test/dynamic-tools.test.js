@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { fileURLToPath } from "node:url";
+import semver from "semver";
 import Loader from "@deepseek-ai/cordis-plugin-loader";
 import { LlmAdapter, createUserMessage } from "@deepseek-ai/dsh-llm";
 import { Session } from "@deepseek-ai/dsh-session";
@@ -18,9 +19,11 @@ const updates = (session) => session.snapshotEvents()
   .flatMap((event) => event.data.message.content);
 const crumbs = (session) => session.deriveMessages().filter(isBreadcrumbMessage);
 const toolNames = (request) => (request.tools ?? []).map((tool) => tool.name);
-// RC.2 through RC.5 rebuild addition-only declarations on removals and empty -> nonempty
+// RC.2+ rebuild addition-only declarations on removals and empty -> nonempty
 // transitions. Keep the older host's exact wire contract independently checked.
-const rebasesEmptyAddition = ["0.2.2-rc.2", "0.2.2-rc.3", "0.2.2-rc.4", "0.2.2-rc.5"].includes(llmPackage.version);
+const rebasesEmptyAddition = semver.satisfies(llmPackage.version, ">=0.2.2-rc.2", {
+  includePrerelease: true,
+});
 
 // Only the provider response is scripted: request construction, tool updates,
 // pre-step delivery, Loader config and session projections use the real host.

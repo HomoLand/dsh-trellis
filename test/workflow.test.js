@@ -1,7 +1,10 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { mkdtemp, mkdir, rm, symlink, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join, resolve, sep } from "node:path";
 import {
+  findProjectRoot,
   parseWorkflowStateBlocks,
   readCached,
   resolveTrellisState,
@@ -9,6 +12,7 @@ import {
   mapStatus,
   FALLBACK_BREADCRUMB,
 } from "../lib/workflow.js";
+import { nodeFs } from "../lib/node-fs.js";
 import { truncateUtf8 } from "../lib/breadcrumb.js";
 
 /** In-memory filesystem shim for workflow.js, keyed by absolute path. */
@@ -18,9 +22,15 @@ function memoryFs(initial = {}) {
   const mtimes = new Map();
   let tick = 1;
   const info = (path) => {
-    if (!files.has(path)) return null;
-    if (!mtimes.has(path)) mtimes.set(path, tick++);
-    return { mtimeMs: mtimes.get(path) };
+    if (files.has(path)) {
+      if (!mtimes.has(path)) mtimes.set(path, tick++);
+      return { mtimeMs: mtimes.get(path), isDirectory: false };
+    }
+    const prefix = `${path}${sep}`;
+    if ([...files.keys()].some((p) => p.startsWith(prefix))) {
+      return { mtimeMs: 1, isDirectory: true };
+    }
+    return null;
   };
   return {
     files,
@@ -496,4 +506,168 @@ test("readCached deletes removed paths and caps cache size at 64 FIFO entries", 
   assert.equal(cache.size, 64);
   assert.equal(cache.has(proj("f-0.txt")), false);
   assert.equal(cache.has(proj("f-69.txt")), true);
+});
+
+test("parseWorkflowStateBlocks skips HTML comments, code fences, and empty blocks while preserving inline code lines", () => {
+  const md = [
+    "<!-- Example: [workflow-state:no_task] -> comment should not bind -->",
+    "",
+    "```markdown",
+    "[workflow-state:planning]",
+    "Fenced example block should be ignored.",
+    "[/workflow-state:planning]",
+    "```",
+    "",
+    "```inline example``` does not start a fence",
+    "",
+    "[workflow-state:no_task]",
+    "Real no-task instructions.",
+    "[/workflow-state:no_task]",
+    "",
+    "[workflow-state:planning]",
+    "Real planning instructions.",
+    "[/workflow-state:planning]",
+    "",
+    "[workflow-state:empty]",
+    "   ",
+    "[/workflow-state:empty]",
+  ].join("\n");
+
+  const blocks = parseWorkflowStateBlocks(md);
+  assert.equal(blocks.get("no_task"), "Real no-task instructions.");
+  assert.equal(blocks.get("planning"), "Real planning instructions.");
+  assert.equal(blocks.has("empty"), false);
+});
+
+test("findProjectRoot with nodeFs supports non-git .trellis directories and ignores stray .trellis files", async (t) => {
+  const tempRoot = await mkdtemp(join(tmpdir(), "dsh-trellis-root-"));
+  t.after(() => rm(tempRoot, { recursive: true, force: true }));
+
+  const repoRoot = join(tempRoot, "repo");
+  const nestedPkg = join(repoRoot, "packages", "sub");
+  const leafDir = join(nestedPkg, "src");
+  await mkdir(join(repoRoot, ".trellis"), { recursive: true });
+  await mkdir(leafDir, { recursive: true });
+  await writeFile(join(nestedPkg, ".trellis"), "stray file marker", "utf8");
+
+  assert.equal(
+    await findProjectRoot(leafDir, [".trellis", ".git"], nodeFs),
+    repoRoot,
+  );
+});
+
+test("resolveTrellisState strips BOM, normalizes Windows task paths, and blocks pointer escapes and symlink escapes", async (t) => {
+  const fs = memoryFs({
+    [proj(".git")]: "",
+    [proj(".trellis/workflow.md")]: `\uFEFF[workflow-state:planning]\nBOM workflow.\n[/workflow-state:planning]\n[workflow-state:no_task]\nIdle.\n[/workflow-state:no_task]\n[workflow-state:task_error]\nBroken task.\n[/workflow-state:task_error]`,
+    [proj(".trellis/workflows/team.md")]: `\uFEFF[workflow-state:planning]\nBOM team workflow.\n[/workflow-state:planning]`,
+    [proj(".trellis/config.yaml")]: `\uFEFFdefault_workflow: "team"\n`,
+    [proj(".trellis/.runtime/sessions/dsh_bom.json")]: `\uFEFF{"current_task":".\\\\.trellis\\\\tasks\\\\own"}`,
+    [proj(".trellis/tasks/own/task.json")]: `\uFEFF{"status":"planning"}`,
+    [join(resolve("."), "outside-task", "task.json")]: '{"status":"planning"}',
+  });
+
+  const invalidKey = await resolveTrellisState({
+    cwd: projectRoot,
+    markers: [".git"],
+    contextKey: "../evil",
+    fs,
+    cache: new Map(),
+  });
+  assert.equal(invalidKey.status, "no_task");
+
+  const bomOk = await resolveTrellisState({
+    cwd: projectRoot,
+    markers: [".git"],
+    contextKey: "dsh_bom",
+    fs,
+    cache: new Map(),
+  });
+  assert.equal(bomOk.status, "planning");
+  assert.equal(bomOk.taskPath, ".trellis/tasks/own");
+  assert.equal(bomOk.body, "BOM team workflow.");
+
+  for (const escapePtr of [
+    "../outside-task",
+    ".trellis/tasks/../../outside-task",
+    ".trellis/tasks/../../../outside-task",
+    "tasks/bad\0null",
+  ]) {
+    fs.files.set(
+      proj(".trellis/.runtime/sessions/dsh_bom.json"),
+      JSON.stringify({ current_task: escapePtr }),
+    );
+    const escaped = await resolveTrellisState({
+      cwd: projectRoot,
+      markers: [".git"],
+      contextKey: "dsh_bom",
+      fs,
+      cache: new Map(),
+    });
+    assert.equal(escaped.status, "task_error");
+    assert.equal(escaped.taskPath, null);
+  }
+
+  // Real filesystem symlink/junction escape under .trellis/tasks/
+  const tempBase = await mkdtemp(join(tmpdir(), "dsh-trellis-symlink-"));
+  t.after(() => rm(tempBase, { recursive: true, force: true }));
+  const realRepo = join(tempBase, "repo");
+  const outsideTask = join(tempBase, "outside-task");
+  await mkdir(join(realRepo, ".trellis", "tasks"), { recursive: true });
+  await mkdir(join(realRepo, ".trellis", ".runtime", "sessions"), { recursive: true });
+  await mkdir(outsideTask, { recursive: true });
+  await writeFile(join(realRepo, ".trellis", "workflow.md"), WORKFLOW_MD, "utf8");
+  await writeFile(join(outsideTask, "task.json"), '{"status":"planning"}', "utf8");
+  await symlink(
+    outsideTask,
+    join(realRepo, ".trellis", "tasks", "escape"),
+    process.platform === "win32" ? "junction" : "dir",
+  );
+  await writeFile(
+    join(realRepo, ".trellis", ".runtime", "sessions", "dsh_sym.json"),
+    '{"current_task":".trellis/tasks/escape"}',
+    "utf8",
+  );
+
+  const symState = await resolveTrellisState({
+    cwd: realRepo,
+    markers: [".trellis"],
+    contextKey: "dsh_sym",
+    fs: nodeFs,
+    cache: new Map(),
+  });
+  assert.equal(symState.status, "task_error");
+  assert.equal(symState.taskPath, null);
+});
+
+test("readCached does not cache transient readFile nulls/errors and invalidates on size changes", async () => {
+  const path = proj("transient.txt");
+  let phase = "throw";
+  const cache = new Map();
+  const fs = {
+    async stat() {
+      if (phase === "v2") return { mtimeMs: 10, size: 3 };
+      return { mtimeMs: 10, size: 2 };
+    },
+    async readFile() {
+      if (phase === "throw") throw Object.assign(new Error("busy"), { code: "EBUSY" });
+      if (phase === "null") return null;
+      if (phase === "v1") return "v1";
+      return "v22";
+    },
+  };
+
+  assert.equal(await readCached(path, fs, cache), null);
+  assert.equal(cache.has(path), false);
+
+  phase = "null";
+  assert.equal(await readCached(path, fs, cache), null);
+  assert.equal(cache.has(path), false);
+
+  phase = "v1";
+  assert.equal(await readCached(path, fs, cache), "v1");
+  assert.equal(cache.has(path), true);
+
+  phase = "v2";
+  assert.equal(await readCached(path, fs, cache), "v22");
 });
